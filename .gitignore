@@ -1,1 +1,50 @@
-/dm/
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+dm/
+
+# Frontend
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local uploads and generated document storage
+storage/
+uploads/
+
+# Databases and local runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.tmp
+*.temp
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,9 +1,9 @@
 from fastapi import FastAPI
-from backend.app.api.documents import router as documents_router
+from backend.app.api.routes import api_router
 
 app = FastAPI(title="DocuMindAI", description="An AI-powered document management system", version="1.0.0")
 
-app.include_router(documents_router)
+app.include_router(api_router)
 
 @app.get("/")
 def root():
