@@ -20,10 +20,10 @@ async def upload_document(file: UploadFile = File(...)):
 
     saved_file_info = await save_uploaded_file(file)
     return {
-        "message": "File uploaded successfully",
-        "original_filename": saved_file_info["original_filename"],
-        "saved_filename": saved_file_info["saved_filename"],
-        "file_size": saved_file_info["file_size"],
-        "file_path": saved_file_info["file_path"],
-        "content_type": saved_file_info["content_type"]
-    }
+    "message": "File uploaded successfully",
+    "document_code": saved_file_info["document_code"],
+    "original_filename": saved_file_info["original_filename"],
+    "saved_filename": saved_file_info["saved_filename"],
+    "file_path": saved_file_info["file_path"],
+    "content_type": saved_file_info["content_type"],
+}
