@@ -1,5 +1,9 @@
 from fastapi import FastAPI
 from backend.app.api.routes import api_router
+from backend.app.db.database import engine, Base
+from backend.app.db import models
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="DocuMindAI", description="An AI-powered document management system", version="1.0.0")
 

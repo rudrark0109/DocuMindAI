@@ -48,3 +48,6 @@ uploads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local config files containing secrets
+/backend/app/core/config.py
