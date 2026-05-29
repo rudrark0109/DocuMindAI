@@ -34,6 +34,7 @@ pnpm-debug.log*
 # Local uploads and generated document storage
 storage/
 uploads/
+data/
 
 # Databases and local runtime files
 *.db
@@ -51,3 +52,5 @@ Thumbs.db
 
 # Local config files containing secrets
 /backend/app/core/config.py
+
+
