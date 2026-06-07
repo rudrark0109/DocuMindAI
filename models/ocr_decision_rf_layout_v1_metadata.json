@@ -1,0 +1,53 @@
+{
+  "model_name": "DocuMind OCR Decision Random Forest with Layout Features",
+  "version": "v1_layout",
+  "feature_columns": [
+    "char_count",
+    "word_count",
+    "avg_word_length",
+    "printable_char_ratio",
+    "whitespace_ratio",
+    "alphabetic_ratio",
+    "digit_ratio",
+    "symbol_ratio",
+    "text_block_count",
+    "image_count",
+    "page_width",
+    "page_height",
+    "page_area",
+    "chars_per_page_area",
+    "words_per_page_area",
+    "layout_text_block_count",
+    "layout_image_count",
+    "total_text_area",
+    "avg_text_block_area",
+    "largest_text_block_area",
+    "total_image_area",
+    "avg_image_area",
+    "largest_image_area",
+    "text_area_ratio",
+    "image_area_ratio",
+    "largest_image_area_ratio",
+    "largest_text_block_ratio",
+    "text_to_image_area_ratio"
+  ],
+  "target": "ocr_required",
+  "classes": [
+    "NO",
+    "YES"
+  ],
+  "ocr_policy": {
+    "0": "NO",
+    "1": "YES",
+    "2": "YES",
+    "3": "YES",
+    "4": "MAYBE"
+  },
+  "label_name_map": {
+    "0": "GOOD_TEXT",
+    "1": "WEAK_TEXT",
+    "2": "SCANNED_IMAGE",
+    "3": "CORRUPTED_TEXT",
+    "4": "MIXED_CONTENT"
+  }
+}
