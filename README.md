@@ -52,9 +52,9 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - `Vite`: Frontend dev server and build tooling
 - JavaScript fetch-based service layer (`frontend/src/services/documentApi.js`) for backend API communication
 
-## Work Completed So Far
+## Recent Changes
 
-The following work has already been implemented in the current codebase:
+The following work has been added to the current codebase:
 
 - Backend project structure and app bootstrap are set up under `backend/app`
 - FastAPI app initialization with root and health endpoints:
@@ -81,8 +81,24 @@ The following work has already been implemented in the current codebase:
   - Upload button + uploading state
   - Success/error feedback UI
   - Display of returned uploaded file details
-- Initial notebook added for extraction quality analysis:
+- Notebook work added for extraction and model exploration:
   - `notebooks/01_extraction_quality_analyzing.ipynb`
+  - `notebooks/02_model.ipynb`
+  - `notebooks/03_layout_feature_extraction.ipynb`
+  - `notebooks/04_train_with_layout_features.ipynb`
+- OCR decision model artifact checked in for layout-aware OCR selection:
+  - `models/ocr_decision_rf_layout_v1.joblib`
+  - `models/ocr_decision_rf_layout_v1_metadata.json`
+
+## Current State
+
+DocuMindAI now supports the core document intake flow:
+
+- Upload documents through the React frontend
+- Persist file metadata and processing state in PostgreSQL
+- Store uploaded files locally in `storage/`
+- Retrieve uploaded documents through the API
+- Use the notebook and model assets as the base for OCR and extraction experiments
 
 ## Current API
 
@@ -112,6 +128,7 @@ DocuMindAI/
 |- frontend/
 |  |- src/
 |  `- package.json
+|- models/
 |- notebooks/
 |- storage/
 |- requirements.txt
@@ -153,8 +170,15 @@ npm run dev
 
 Vite runs with host `0.0.0.0` (see frontend scripts).
 
-## Roadmap
+## Planned Next Steps
 
 - OCR extraction pipeline for uploaded documents
+- Layout-aware OCR decisioning and extraction quality scoring
 - Embedding generation and vector indexing with `pgvector`
-- Semantic search and RAG chat over the document corpus
+- Semantic search over the document corpus
+- RAG chat experience for document Q&A
+- Better document status tracking for queued, processed, and failed states
+
+## Documentation
+
+Project documentation lives in [`docs/`](docs/README.md). It includes the project abstract, architecture notes, development log, glossary, and appendix.
