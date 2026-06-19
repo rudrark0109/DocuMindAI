@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, Column, Integer, String
+from sqlalchemy import DateTime, Column, Integer, String, Text
 
 from backend.app.db.database import Base
 
@@ -18,3 +18,5 @@ class Document(Base):
     ocr_required = Column(String, nullable=True)
     ocr_confidence = Column(String, nullable=True)
     ocr_model_version = Column(String, nullable=True)
+    extracted_text = Column(Text, nullable=True)
+    extraction_method = Column(String, nullable=True)

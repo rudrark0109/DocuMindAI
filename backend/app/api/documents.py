@@ -7,6 +7,7 @@ from backend.app.db.models import Document
 from backend.app.schemas.schemas import DocumentResponse
 from backend.app.services.file_storage import save_uploaded_file
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
+from backend.app.extraction.extraction_pipeline import process_document
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -92,4 +93,70 @@ def get_ocr_verdict(
         "document_code": document.document_code,
         "original_filename": document.original_filename,
         "ocr_verdict": verdict,
+    }
+
+@router.post("/{document_id}/extract")
+def extract_document_text(
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Run document extraction pipeline and store extracted text in database.
+    """
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    if document.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Text extraction currently supports PDF documents only.",
+        )
+
+    extraction_result = process_document(document.file_path)
+
+    if extraction_result["status"] == "pending_ocr":
+        document.processing_status = "pending_ocr"
+        document.ocr_required = extraction_result["ocr_required"]
+        document.ocr_confidence = str(extraction_result["ocr_confidence"])
+
+        db.commit()
+        db.refresh(document)
+
+        return {
+            "document_id": document.id,
+            "document_code": document.document_code,
+            "status": "pending_ocr",
+            "message": extraction_result["message"],
+            "ocr_required": extraction_result["ocr_required"],
+            "ocr_confidence": extraction_result["ocr_confidence"],
+        }
+
+    document.extracted_text = extraction_result["text"]
+    document.extraction_method = extraction_result["extraction_method"]
+    document.ocr_required = extraction_result["ocr_required"]
+    document.ocr_confidence = str(extraction_result["ocr_confidence"])
+    document.processing_status = "text_extracted"
+
+    db.commit()
+    db.refresh(document)
+
+    return {
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "status": document.processing_status,
+        "ocr_required": document.ocr_required,
+        "ocr_confidence": document.ocr_confidence,
+        "extraction_method": document.extraction_method,
+        "character_count": extraction_result["character_count"],
+        "page_count": extraction_result["page_count"],
     }
