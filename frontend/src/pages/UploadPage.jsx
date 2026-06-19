@@ -37,7 +37,7 @@ function UploadPage() {
             <h1>DocuMind AI</h1>
             <h2>Upload Document</h2>
 
-            <input type="file" onChange={handleFileChange} accept=".pdf,.png,.jpg,.jpeg"/>
+            <input type="file" onChange={handleFileChange} accept=".pdf"/>
             <button onClick={handleUpload} disabled={isUploading}>
                 {isUploading ? "Uploading..." : "Upload"}
             </button>

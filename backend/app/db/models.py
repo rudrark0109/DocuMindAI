@@ -15,3 +15,6 @@ class Document(Base):
     file_size = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     processing_status = Column(String, default="uploaded", nullable=False)
+    ocr_required = Column(String, nullable=True)
+    ocr_confidence = Column(String, nullable=True)
+    ocr_model_version = Column(String, nullable=True)

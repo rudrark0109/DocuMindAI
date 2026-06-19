@@ -6,20 +6,18 @@ from backend.app.db.database import get_db
 from backend.app.db.models import Document
 from backend.app.schemas.schemas import DocumentResponse
 from backend.app.services.file_storage import save_uploaded_file
+from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 ALLOWED_CONTENT_TYPES = [
     "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/jpg"
 ]
 
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF and image files (JPEG, PNG, JPG) are allowed.")
+        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
 
     saved_file_info = await save_uploaded_file(file)
     
@@ -51,3 +49,47 @@ def get_document_by_id(document_id: str, db: Session = Depends(get_db)):
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+@router.post("/{document_id}/ocr-verdict")
+def get_ocr_verdict(
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Run OCR Decision Engine on an uploaded PDF and return OCR verdict.
+    """
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    if document.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="OCR verdict currently supports PDF documents only.",
+        )
+
+    verdict = predict_ocr_requirement(document.file_path)
+
+    document.ocr_required = verdict["ocr_required"]
+    document.ocr_confidence = str(verdict["confidence"])
+    document.ocr_model_version = verdict["model_version"]
+    document.processing_status = "ocr_checked"
+
+    db.commit()
+    db.refresh(document)
+
+    return {
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "original_filename": document.original_filename,
+        "ocr_verdict": verdict,
+    }
