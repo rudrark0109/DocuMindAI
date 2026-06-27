@@ -59,3 +59,4 @@ def predict_ocr_requirement(file_path: str) -> dict:
         "file_path": file_path,
         "features": features,
     }
+

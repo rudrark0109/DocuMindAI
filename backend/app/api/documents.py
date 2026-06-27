@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from backend.app.db.database import get_db
 from backend.app.db.models import Document
+from backend.app.db.chunk_model import DocumentChunk
+from backend.app.indexing.chunking_pipeline import create_document_chunks
 from backend.app.schemas.schemas import DocumentResponse
 from backend.app.services.file_storage import save_uploaded_file
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
@@ -100,9 +102,7 @@ def extract_document_text(
     document_id: str,
     db: Session = Depends(get_db),
 ):
-    """
-    Run document extraction pipeline and store extracted text in database.
-    """
+   
 
     document = (
         db.query(Document)
@@ -160,3 +160,78 @@ def extract_document_text(
         "character_count": extraction_result["character_count"],
         "page_count": extraction_result["page_count"],
     }
+
+@router.get("/{document_id}/text")
+def get_document_text(
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    if not document.extracted_text:
+        raise HTTPException(
+            status_code=404,
+            detail="No extracted text found. Run extraction first.",
+        )
+
+    return {
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "original_filename": document.original_filename,
+        "extraction_method": document.extraction_method,
+        "processing_status": document.processing_status,
+        "text": document.extracted_text,
+    }
+
+@router.post("/{document_id}/chunk")
+def chunk_document_text(document_id: str, db: Session = Depends(get_db)):
+    document = (db.query(Document).filter(Document.id == document_id).first())
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    
+    if not document.extracted_text:
+        raise HTTPException(status_code=400, detail="Document has no extracted text to chunk. Run extraction first.")
+    
+    existing_chunks = (db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).count())
+    if existing_chunks > 0:
+        raise HTTPException(status_code=400, detail="Document has already been chunked.")
+        
+    chunk_result = create_document_chunks(document)
+
+    for chunk in chunk_result["chunks"]:
+        chunk_record = DocumentChunk(
+            id=str(uuid4()),
+            document_id=document.id,
+            chunk_index=chunk["chunk_index"],
+            chunk_text=chunk["text"],
+            word_count=chunk["word_count"],
+            character_count=chunk["char_count"],
+            start_word_index=chunk["start_word_index"],
+            end_word_index=chunk["end_word_index"],
+        )
+
+        db.add(chunk_record)
+
+    document.processing_status = "text_chunked"
+    db.commit()
+    db.refresh(document)
+
+    return {
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "processing_status": document.processing_status,
+        "chunk_count": chunk_result["chunk_count"],
+    }
+        

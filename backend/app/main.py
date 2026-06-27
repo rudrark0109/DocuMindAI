@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from backend.app.api.routes import api_router
 from backend.app.db.database import engine, Base
 from backend.app.db import models
+from backend.app.db import chunk_model
 
 Base.metadata.create_all(bind=engine)
 
