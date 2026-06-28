@@ -270,4 +270,4 @@ Vite runs with host `0.0.0.0` (see frontend scripts).
 
 ## Documentation
 
-Project documentation lives in [`docs/`]('docs/DocuMindAI - Project Report.md'). It includes the project abstract, architecture notes, development log, glossary, and appendix.
+Project documentation lives in [`docs/`](docs/'DocuMindAI - Project Report.md'). It includes the project abstract, architecture notes, development log, glossary, and appendix.
