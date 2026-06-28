@@ -1,4 +1,5 @@
 from datetime import datetime
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Column, Integer, String, Text, ForeignKey
 
 from backend.app.db.database import Base
@@ -14,5 +15,6 @@ class DocumentChunk(Base):
     start_word_index = Column(Integer)
     end_word_index = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # embedding_status = Column(String, default="pending")
-    # embedding_model = Column(String, nullable=True)
+    embedding = Column(Vector(384), nullable=True)
+    embedding_model = Column(String, nullable=True)
+    embedding_status = Column(String, default="pending")

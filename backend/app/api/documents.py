@@ -10,6 +10,7 @@ from backend.app.schemas.schemas import DocumentResponse
 from backend.app.services.file_storage import save_uploaded_file
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
 from backend.app.extraction.extraction_pipeline import process_document
+from backend.app.indexing.embedding_pipeline import embed_document_chunks
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -234,4 +235,27 @@ def chunk_document_text(document_id: str, db: Session = Depends(get_db)):
         "processing_status": document.processing_status,
         "chunk_count": chunk_result["chunk_count"],
     }
-        
+
+@router.post("/{document_id}/embed")
+def embed_document(document_id: str, db: Session = Depends(get_db)):
+    document = (db.query(Document).filter(Document.id == document_id).first())
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    
+    chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).count()
+    if chunk_count == 0:
+        raise HTTPException(status_code=400, detail="Document has no chunks to embed. Run chunking first.")
+    
+    embedding_result = embed_document_chunks(document_id, db)
+
+    if embedding_result["status"] == "embedded":
+        document.processing_status = "embedded"
+        db.commit()
+        db.refresh(document)
+
+    return{
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "processing_status": document.processing_status,
+        "embedding_result": embedding_result,
+    }

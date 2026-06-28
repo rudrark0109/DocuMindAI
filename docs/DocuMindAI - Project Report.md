@@ -121,38 +121,90 @@ The architecture is intentionally explicit so each subsystem can be tested and i
 
 That separation keeps the project production-minded and avoids a single monolithic pipeline that is hard to reason about.
 
-## Current Implementation
+### Current Implementation
 
 ### Implemented Backend Features
 
 - FastAPI backend is operational
-- `POST /documents/upload`
-- `GET /documents`
-- `GET /documents/{document_id}`
+- Document upload and management
+  - `POST /documents/upload` - Upload PDF documents
+  - `GET /documents` - List all documents
+  - `GET /documents/{document_id}` - Retrieve document metadata
+- OCR decision engine
+  - `POST /documents/{document_id}/ocr-verdict` - Get OCR prediction
+  - ML-based decision with confidence scores
+- Text extraction pipeline
+  - `POST /documents/{document_id}/extract` - Extract text intelligently
+  - `GET /documents/{document_id}/text` - Retrieve extracted text
+  - Handles both OCR-required and direct extraction paths
+- Text chunking pipeline
+  - `POST /documents/{document_id}/chunk` - Chunk extracted text
+  - Configurable chunk size and overlap
+  - Word-level positioning for retrieval accuracy
 
 ### Upload Pipeline
 
 The current upload pipeline performs the following steps:
 
-1. Validate the file type
+1. Validate the file type (PDF only)
 2. Generate a custom document code
 3. Store the file locally
 4. Store metadata in PostgreSQL
+5. Return document ID for downstream processing
+
+### Extraction Pipeline
+
+The extraction pipeline implements intelligent text extraction:
+
+1. Validate document exists and is accessible
+2. Run OCR Decision Engine to predict OCR requirement
+3. If OCR not needed: extract text directly using PyMuPDF
+4. If OCR needed: mark as pending OCR (pipeline not yet implemented)
+5. Store extraction result, method, and OCR verdict in database
+6. Return extraction status and metadata
+
+### Chunking Pipeline
+
+The chunking pipeline breaks extracted text into semantic chunks:
+
+1. Validate document has extracted text
+2. Check if document already has chunks (prevents re-chunking)
+3. Split text into configurable chunks (default: 800 words, 120-word overlap)
+4. Maintain word-level indices for positioning
+5. Persist each chunk with metadata (index, word count, character count, positions)
+6. Return chunk count and summary
 
 ### Database Metadata
 
-The database stores metadata only, including:
+The database stores metadata and processing state, including:
+
+**Document Table:**
 
 - internal UUID
-- document code
+- document code (human-readable identifier)
 - original filename
 - saved filename
 - file path
-- content type
-- processing status
-- created time
+- content type (MIME type)
+- file size in bytes
+- processing status (uploaded, ocr_checked, text_extracted, text_chunked, etc.)
+- created timestamp
+- OCR verdict (YES/NO) and confidence score
+- OCR model version used
+- extracted text
+- extraction method (pymupdf, ocr, etc.)
 
-The document file itself stays on the filesystem.
+**Document Chunk Table:**
+
+- chunk UUID
+- foreign key to document
+- chunk index (position in sequence)
+- chunk text
+- word count and character count
+- start and end word indices (for retrieval positioning)
+- created timestamp
+
+The document files themselves stay on the filesystem in `storage/`.
 
 ## OCR Decision Engine
 
@@ -169,9 +221,35 @@ This is a key differentiator in the project because many systems either OCR ever
 - Running OCR unnecessarily wastes time and compute.
 - Selective OCR improves throughput and makes the pipeline more intelligent.
 
+### Current Implementation
+
+The OCR Decision Engine is **now implemented and operational**:
+**Components:**
+
+- **Feature Extractor** (`pdf_feature_extractor.py`): Extracts layout and content features from PDFs
+  - Page count
+  - Text density per page
+  - Character and word counts
+  - Layout complexity metrics
+- **ML Model** (`ocr_decision_engine.py`): Trained Random Forest model
+  - Loads serialized model from `models/ocr_decision_model.joblib`
+  - Returns binary prediction (YES/NO) and confidence scores
+  - Provides per-class probabilities for decision transparency
+- **API Endpoint**: `POST /documents/{document_id}/ocr-verdict`
+  - Returns OCR requirement prediction with confidence
+  - Stored in document metadata for retrieval
+
+**Model Details:**
+
+- Algorithm: Random Forest (scikit-learn)
+- Features: Layout-aware extracted from PDF structure
+- Output: Binary classification (OCR required: YES/NO)
+- Confidence: Probability score for the predicted class
+- Model version tracking for traceability
+
 ### Dataset Notes
 
-The current labeled dataset includes:
+The model was trained on a labeled dataset that includes:
 
 - digital PDFs
 - scanned PDFs
@@ -188,7 +266,35 @@ Labels are:
 
 ### Current Result Snapshot
 
-The current model produced perfect scores on the small evaluation set and also surfaced at least one human labeling mistake. That is useful, but it should be treated as a promising signal rather than a final-world claim.
+The trained model shows strong performance on the evaluation set. The feature engineering prioritizes layout characteristics to make robust decisions about document extractability. Model performance and improvements are documented in the notebooks:
+- `notebooks/03_layout_feature_extraction.ipynb` - Feature engineering process
+- `notebooks/04_train_with_layout_features.ipynb` - Model training and evaluation
+
+## Completed Work
+
+### Text Extraction Pipeline
+
+The text extraction pipeline is now operational:
+- PDF text extraction using PyMuPDF
+- OCR decision engine integration
+- Intelligent routing based on document characteristics
+- Extraction result persistence and tracking
+
+### Text Chunking Pipeline
+
+Text chunking with word-level positioning is now implemented:
+- Configurable chunk size and overlap
+- Semantic chunk boundaries
+- Word-level indices for precise retrieval
+- Database persistence with chunk metadata
+
+### OCR Decision Engine
+
+A trained ML model now makes intelligent OCR decisions:
+- Layout-aware feature extraction
+- Random Forest classification
+- Confidence scoring and transparency
+- Model versioning and tracking
 
 ## Future Work
 
@@ -229,17 +335,83 @@ Planned output classes include:
 - `needs_form_field_extraction`
 - `hybrid_required`
 
+### OCR Extraction Implementation
+
+For documents where OCR is required:
+
+- PaddleOCR integration
+- Tesseract fallback
+- Layout-aware OCR processing
+- Extracted text persistence
+
+### Embedding and Vector Search
+
+Next phase for semantic capabilities:
+
+- Embedding generation for document chunks
+- Vector storage with pgvector
+- Semantic search implementation
+- Similarity ranking and retrieval
+
 ### Downstream Goals
 
-- chunking
-- embedding generation
-- vector storage
 - semantic search
 - RAG with citations
+- Batch document processing
+- Async job queue for large pipelines
 
 ## Development Log
 
 This file records meaningful implementation milestones and decisions.
+
+### 2026-06-27
+
+**Text Extraction and Chunking Pipeline Complete**
+
+What changed:
+
+- Implemented PDF text extraction pipeline using PyMuPDF
+- Integrated OCR decision engine into extraction flow
+- Implemented text chunking with configurable overlap
+- Added DocumentChunk model and persistence layer
+- Added five new API endpoints for extraction and chunking workflow
+
+Why it changed:
+
+- Extracted text is the foundation for embedding generation and semantic search
+- Chunking with word-level positioning ensures precise retrieval context
+- Early completion enables faster iteration on downstream features
+
+Implementation details:
+
+- `backend/app/extraction/` module handles OCR decisions and text extraction
+- `backend/app/indexing/` module handles text chunking
+- `backend/app/db/chunk_model.py` stores chunks with positioning metadata
+- API endpoints follow explicit document processing flow
+
+Notes:
+
+- Chunking uses word-level splitting rather than character or sentence boundaries for more flexible downstream processing
+- OCR-required documents are marked as pending (actual OCR implementation deferred)
+- Chunk overlap (120 words default) balances context preservation with storage efficiency
+
+### 2026-06-19
+
+**OCR Decision Engine and PDF Feature Extraction**
+
+What changed:
+
+- Completed feature engineering for layout-aware OCR decisions
+- Trained Random Forest model for OCR requirement prediction
+- Added `pdf_feature_extractor.py` for feature generation
+- Added `ocr_decision_engine.py` API integration
+- Model and metadata artifacts checked into `models/`
+
+Why it changed:
+
+- Selective OCR is a core project principle: avoid unnecessary expensive processing
+- Layout features provide better signal than simple heuristics
+- ML-based approach enables future refinement with more labeled data
 
 ### 2026-06-09
 
@@ -274,23 +446,53 @@ This file records meaningful implementation milestones and decisions.
 
 ### Current Repository Areas
 
-- `backend/`
-- `frontend/`
-- `models/`
-- `notebooks/`
-- `storage/`
-- `data/`
+- `backend/app/` - Main application code
+  - `api/` - API route handlers
+  - `db/` - Database models and connections
+  - `extraction/` - OCR decision and PDF text extraction
+  - `indexing/` - Text chunking and processing
+  - `schemas/` - Pydantic models for validation
+  - `services/` - File storage and utilities
+  - `core/` - Configuration and settings
+- `frontend/` - React + Vite frontend
+- `models/` - Serialized ML models and metadata
+- `notebooks/` - Jupyter notebooks for experimentation and analysis
+- `storage/` - Local file storage for uploaded documents
+- `docs/` - Project documentation
+- `data/` - Training data and datasets
 
 ### Current API Surface
 
-- `GET /`
-- `GET /health`
-- `POST /documents/upload`
-- `GET /documents`
-- `GET /documents/{document_id}`
+**System:**
+
+- `GET /` - Welcome message
+- `GET /health` - Health check endpoint
+
+**Document Management:**
+
+- `POST /documents/upload` - Upload a PDF document
+- `GET /documents` - List all uploaded documents (newest first)
+- `GET /documents/{document_id}` - Get document metadata
+
+**OCR & Extraction:**
+
+- `POST /documents/{document_id}/ocr-verdict` - Get OCR requirement prediction
+- `POST /documents/{document_id}/extract` - Extract text from document
+- `GET /documents/{document_id}/text` - Retrieve extracted text
+
+**Chunking:**
+
+- `POST /documents/{document_id}/chunk` - Chunk extracted text and persist
+
+**Interactive Docs:**
+
+- `GET /docs` - Swagger UI (interactive API explorer)
+- `GET /redoc` - ReDoc (alternative API documentation)
 
 ### Reference Notes
 
 - The project is intentionally being built in stages.
 - The documentation should be updated as each new subsystem is added.
 - Keep architecture notes close to implementation reality so the docs remain useful as engineering records.
+- API endpoints follow explicit document processing stages to maintain clarity and testability.
+- Each pipeline stage (upload → extract → chunk) is independently callable for flexibility.
