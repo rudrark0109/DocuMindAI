@@ -61,6 +61,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 ## Recent Changes
 
 ### Phase 1: Core Document Management
+
 - Backend project structure and app bootstrap are set up under `backend/app`
 - FastAPI app initialization with root and health endpoints:
   - `GET /`
@@ -78,6 +79,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - SQLAlchemy `Document` model implemented with fields for document tracking and extraction status
 
 ### Phase 2: OCR Decision Engine & PDF Text Extraction
+
 - **OCR Decision Engine** (`backend/app/extraction/ocr_decision_engine.py`):
   - Loads a trained Random Forest model to predict if OCR is needed for a PDF
   - Extracts layout and content features from PDFs to inform the decision
@@ -101,6 +103,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
   - `models/ocr_model_metadata.json` - Model metadata including feature columns and version
 
 ### Phase 3: Text Chunking Pipeline
+
 - **Text Chunker** (`backend/app/indexing/text_chunker.py`):
   - Splits extracted text into configurable chunks (default: 800 words per chunk, 120-word overlap)
   - Maintains word-level indices for chunk positioning in original text
@@ -118,6 +121,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
   - New fields: `extracted_text`, `extraction_method`, `ocr_required`, `ocr_confidence`, `ocr_model_version`
 
 ### Supporting Work
+
 - Notebook work added for extraction and model exploration:
   - `notebooks/01_extraction_quality_analyzing.ipynb`
   - `notebooks/02_model.ipynb`
@@ -142,21 +146,25 @@ DocuMindAI now supports a complete document intake and processing pipeline:
 Base URL: `http://127.0.0.1:8000`
 
 ### System Endpoints
+
 - `GET /` - Welcome message
 - `GET /health` - Health check
 
 ### Document Management
+
 - `POST /documents/upload` - Upload a PDF document
 - `GET /documents` - List uploaded documents (newest first)
 - `GET /documents/{document_id}` - Fetch document metadata by ID
 
 ### Document Processing
+
 - `POST /documents/{document_id}/ocr-verdict` - Determine if OCR is needed for the document
 - `POST /documents/{document_id}/extract` - Extract text from the document (intelligently uses OCR decision)
 - `GET /documents/{document_id}/text` - Retrieve extracted text for a document
 - `POST /documents/{document_id}/chunk` - Chunk extracted text and persist chunks
 
 ### Interactive Documentation
+
 - `http://127.0.0.1:8000/docs` - Swagger UI (interactive API explorer)
 
 ## Document Processing Workflow
@@ -173,6 +181,7 @@ The typical workflow for processing a document is:
    - Persists chunks with word-level positioning for precise retrieval
 
 Alternatively, you can:
+
 - Check OCR requirement first → `POST /documents/{document_id}/ocr-verdict` before extraction
 - Retrieve extracted text → `GET /documents/{document_id}/text` after extraction
 - List all documents → `GET /documents` to see all uploaded/processed documents
@@ -270,4 +279,4 @@ Vite runs with host `0.0.0.0` (see frontend scripts).
 
 ## Documentation
 
-Project documentation lives in [`docs/`](docs/README.md). It includes the project abstract, architecture notes, development log, glossary, and appendix.
+Project documentation lives in [`docs/DocuMindAI - Project Report.md`](docs/DocuMindAI%20-%20Project%20Report.md). It includes the project abstract, architecture notes, development log, glossary, and appendix.
