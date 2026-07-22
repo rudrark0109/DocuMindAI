@@ -5,6 +5,9 @@ pydantic_settings
 sqlalchemy
 psycopg2-binary
 python-dotenv
-fitz  # PyMuPDF
 pymupdf
 pgvector
+pandas
+joblib
+scikit-learn==1.8.0
+sentence-transformers

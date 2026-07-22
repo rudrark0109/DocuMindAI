@@ -224,34 +224,61 @@ DocuMindAI/
 
 ## Getting Started
 
-### 1. Install backend dependencies
+### Docker Compose (recommended)
+
+Docker is the only host dependency. Start the complete stack with:
 
 ```bash
+docker compose up --build -d
+```
+
+The services are then available at:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
+- PostgreSQL: `localhost:5433`
+
+Check status or stop the stack with:
+
+```bash
+docker compose ps
+docker compose down
+```
+
+Database data, uploaded documents, and the downloaded embedding-model cache are
+persisted across container restarts. To follow startup logs, run
+`docker compose logs -f`.
+
+### Run directly on the host
+
+Use Python 3.12 for the backend and Node.js 22 for the frontend. First create the
+local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Start PostgreSQL and install the backend dependencies:
+
+```bash
+docker compose up -d postgres
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment
-
-The backend reads environment variables from `.env` (project root).  
-Set at least:
-
-```env
-DATABASE_URL=postgresql://postgres:password@localhost:5432/documind_ai
-```
-
-If `DATABASE_URL` is not set, the app uses the default in `backend/app/core/config.py`.
-
-### 3. Run backend
+Then run the backend:
 
 ```bash
 uvicorn backend.app.main:app --reload
 ```
 
-### 4. Run frontend
+In another terminal, run the frontend:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
