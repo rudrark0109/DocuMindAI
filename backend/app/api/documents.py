@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from sqlalchemy.orm import Session
 from uuid import uuid4
@@ -13,6 +15,7 @@ from backend.app.extraction.extraction_pipeline import process_document
 from backend.app.indexing.embedding_pipeline import embed_document_chunks
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+logger = logging.getLogger(__name__)
 
 ALLOWED_CONTENT_TYPES = [
     "application/pdf",
@@ -123,30 +126,30 @@ def extract_document_text(
             detail="Text extraction currently supports PDF documents only.",
         )
 
-    extraction_result = process_document(document.file_path)
-
-    if extraction_result["status"] == "pending_ocr":
-        document.processing_status = "pending_ocr"
-        document.ocr_required = extraction_result["ocr_required"]
-        document.ocr_confidence = str(extraction_result["ocr_confidence"])
-
+    try:
+        extraction_result = process_document(document.file_path)
+    except Exception as exc:
+        document.processing_status = "extraction_failed"
         db.commit()
-        db.refresh(document)
-
-        return {
-            "document_id": document.id,
-            "document_code": document.document_code,
-            "status": "pending_ocr",
-            "message": extraction_result["message"],
-            "ocr_required": extraction_result["ocr_required"],
-            "ocr_confidence": extraction_result["ocr_confidence"],
-        }
+        logger.exception(
+            "Document extraction failed", extra={"document_id": document_id}
+        )
+        raise HTTPException(status_code=500, detail="Document extraction failed.") from exc
 
     document.extracted_text = extraction_result["text"]
     document.extraction_method = extraction_result["extraction_method"]
     document.ocr_required = extraction_result["ocr_required"]
-    document.ocr_confidence = str(extraction_result["ocr_confidence"])
-    document.processing_status = "text_extracted"
+    document.ocr_confidence = (
+        str(extraction_result["ocr_confidence"])
+        if extraction_result["ocr_confidence"] is not None
+        else None
+    )
+    document.ocr_model_version = extraction_result["ocr_model_version"]
+    document.processing_status = (
+        "text_extracted"
+        if extraction_result["status"] == "success"
+        else "text_extraction_empty"
+    )
 
     db.commit()
     db.refresh(document)
@@ -158,7 +161,9 @@ def extract_document_text(
         "ocr_required": document.ocr_required,
         "ocr_confidence": document.ocr_confidence,
         "extraction_method": document.extraction_method,
+        "extraction_status": extraction_result["status"],
         "character_count": extraction_result["character_count"],
+        "word_count": extraction_result["word_count"],
         "page_count": extraction_result["page_count"],
     }
 

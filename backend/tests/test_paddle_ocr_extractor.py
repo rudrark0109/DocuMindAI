@@ -1,10 +1,13 @@
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from backend.app.extraction.paddle_ocr_extractor import (
     _parse_result,
     extract_text_with_paddleocr,
+    get_ocr_engine,
 )
 
 
@@ -35,6 +38,17 @@ class FakeEngine:
 
 
 class PaddleOCRExtractorTests(unittest.TestCase):
+    def test_disables_mkldnn_for_cpu_runtime_compatibility(self):
+        paddle_ocr = MagicMock(return_value=object())
+        fake_module = SimpleNamespace(PaddleOCR=paddle_ocr)
+        get_ocr_engine.cache_clear()
+
+        with patch.dict(sys.modules, {"paddleocr": fake_module}):
+            get_ocr_engine()
+
+        self.assertFalse(paddle_ocr.call_args.kwargs["enable_mkldnn"])
+        get_ocr_engine.cache_clear()
+
     def test_parse_result_normalizes_lines(self):
         lines, text = _parse_result(
             FakeResult([" Hello ", "", "world"], [0.9, 0.5, 0.8], [])

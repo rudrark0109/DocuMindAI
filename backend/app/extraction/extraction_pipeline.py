@@ -1,4 +1,5 @@
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
+from backend.app.extraction.paddle_ocr_extractor import extract_text_with_paddleocr
 from backend.app.extraction.pdf_extractor import extract_text_from_pdf
 
 
@@ -9,23 +10,23 @@ def process_document(file_path: str) -> dict:
 
     ocr_verdict = predict_ocr_requirement(file_path)
 
-    if ocr_verdict["ocr_required"] == "NO":
-
+    ocr_required = ocr_verdict["ocr_required"]
+    if ocr_required == "NO":
         extraction_result = extract_text_from_pdf(file_path)
-
-        return {
-            "status": "success",
-            "ocr_required": "NO",
-            "ocr_confidence": ocr_verdict["confidence"],
-            "extraction_method": extraction_result["extraction_method"],
-            "text": extraction_result["text"],
-            "page_count": extraction_result["page_count"],
-            "character_count": extraction_result["character_count"],
-        }
+    elif ocr_required == "YES":
+        extraction_result = extract_text_with_paddleocr(file_path)
+    else:
+        raise ValueError(f"Unsupported OCR verdict: {ocr_required}")
 
     return {
-        "status": "pending_ocr",
-        "ocr_required": "YES",
+        "status": extraction_result["status"],
+        "ocr_required": ocr_required,
         "ocr_confidence": ocr_verdict["confidence"],
-        "message": "OCR extraction pipeline not implemented yet.",
+        "ocr_model_version": ocr_verdict["model_version"],
+        "extraction_method": extraction_result["extraction_method"],
+        "text": extraction_result["text"],
+        "page_count": extraction_result["page_count"],
+        "character_count": extraction_result["character_count"],
+        "word_count": extraction_result["word_count"],
+        "pages": extraction_result["pages"],
     }

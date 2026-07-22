@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     ocr_text_score_threshold: float = 0.5
     ocr_use_doc_orientation: bool = True
     ocr_use_textline_orientation: bool = True
+    ocr_enable_mkldnn: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
