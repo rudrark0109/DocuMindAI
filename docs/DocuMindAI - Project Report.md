@@ -159,7 +159,7 @@ The extraction pipeline implements intelligent text extraction:
 1. Validate document exists and is accessible
 2. Run OCR Decision Engine to predict OCR requirement
 3. If OCR not needed: extract text directly using PyMuPDF
-4. If OCR needed: mark as pending OCR (pipeline not yet implemented)
+4. If OCR is needed: render each page and extract text with PaddleOCR
 5. Store extraction result, method, and OCR verdict in database
 6. Return extraction status and metadata
 
@@ -335,14 +335,20 @@ Planned output classes include:
 - `needs_form_field_extraction`
 - `hybrid_required`
 
-### OCR Extraction Implementation
+### OCR Extraction
 
-For documents where OCR is required:
+Implemented for documents where OCR is required:
 
-- PaddleOCR integration
+- CPU-backed PaddleOCR integration with cached PP-OCRv6 models
+- Configurable PDF page rendering and orientation handling
+- Normalized page text, line confidence scores, and bounding boxes
+- Extracted text, method, OCR verdict, and processing-status persistence
+
+Planned enhancements:
+
 - Tesseract fallback
-- Layout-aware OCR processing
-- Extracted text persistence
+- Advanced layout reconstruction
+- OCR quality benchmarking
 
 ### Embedding and Vector Search
 
@@ -392,7 +398,7 @@ Implementation details:
 Notes:
 
 - Chunking uses word-level splitting rather than character or sentence boundaries for more flexible downstream processing
-- OCR-required documents are marked as pending (actual OCR implementation deferred)
+- OCR-required documents are processed page-by-page with PaddleOCR
 - Chunk overlap (120 words default) balances context preservation with storage efficiency
 
 ### 2026-06-19

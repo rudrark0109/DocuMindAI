@@ -94,8 +94,8 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
   - Returns text per page with metadata (character count, word count)
   - Tracks extraction method and success status
 - **Extraction Pipeline** (`backend/app/extraction/extraction_pipeline.py`):
-  - Orchestrates the extraction strategy: first checks OCR requirement, then extracts text if possible
-  - Handles pending OCR case when extraction requires OCR processing
+  - Routes direct-text PDFs to PyMuPDF and OCR-required PDFs to PaddleOCR
+  - Returns a consistent extraction contract for either strategy
 - **New API Endpoints**:
   - `POST /documents/{document_id}/ocr-verdict` - Get OCR decision for a document
   - `POST /documents/{document_id}/extract` - Extract text from a document
@@ -177,7 +177,7 @@ The typical workflow for processing a document is:
 2. **Extract** → `POST /documents/{document_id}/extract` - Extract text from the PDF
    - Automatically checks if OCR is needed using the ML model
    - If OCR not needed, extracts text directly using PyMuPDF
-   - If OCR needed, returns pending status for future OCR processing
+   - If OCR is needed, runs PaddleOCR page-by-page and persists the recognized text
 3. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
    - Creates overlapping chunks for better context retention
    - Persists chunks with word-level positioning for precise retrieval
@@ -200,8 +200,9 @@ service used for scanned PDFs. It:
 - keeps downloaded PaddleOCR models in the persistent `paddle_cache` Docker
   volume.
 
-The service is intentionally separate from the OCR decision engine. Wiring it
-into `extraction_pipeline.py` is the next integration step.
+The OCR decision engine and execution service remain separate components. The
+extraction pipeline connects them by routing `NO` verdicts to PyMuPDF and `YES`
+verdicts to PaddleOCR.
 
 Configuration is available through `PADDLE_OCR_LANGUAGE`,
 `PADDLE_OCR_VERSION`, `PADDLE_OCR_DEVICE`, `OCR_RENDER_DPI`,
@@ -319,7 +320,7 @@ Vite runs with host `0.0.0.0` (see frontend scripts).
 
 ## Planned Next Steps
 
-- Wire the PaddleOCR service into the selective extraction pipeline
+- Add OCR quality benchmarks and a Tesseract fallback
 - Embedding generation for document chunks
 - Vector indexing with `pgvector` for semantic search
 - Semantic search endpoints over the document corpus
