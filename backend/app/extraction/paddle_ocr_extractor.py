@@ -26,6 +26,7 @@ def get_ocr_engine():
         lang=settings.paddle_ocr_language,
         ocr_version=settings.paddle_ocr_version,
         device=settings.paddle_ocr_device,
+        enable_mkldnn=settings.ocr_enable_mkldnn,
         text_rec_score_thresh=settings.ocr_text_score_threshold,
         use_doc_orientation_classify=settings.ocr_use_doc_orientation,
         use_doc_unwarping=False,

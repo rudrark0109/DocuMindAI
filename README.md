@@ -207,7 +207,9 @@ verdicts to PaddleOCR.
 Configuration is available through `PADDLE_OCR_LANGUAGE`,
 `PADDLE_OCR_VERSION`, `PADDLE_OCR_DEVICE`, `OCR_RENDER_DPI`,
 `OCR_TEXT_SCORE_THRESHOLD`, `OCR_USE_DOC_ORIENTATION`, and
-`OCR_USE_TEXTLINE_ORIENTATION`; see `.env.example` for defaults.
+`OCR_USE_TEXTLINE_ORIENTATION`. `OCR_ENABLE_MKLDNN` defaults to `false` for
+PP-OCRv6 compatibility with the pinned PaddlePaddle CPU runtime. See
+`.env.example` for defaults.
 
 ## Project Structure
 
