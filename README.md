@@ -21,6 +21,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Extract text from PDFs** using intelligent OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
 - ML-based OCR decision engine with layout-aware feature extraction
+- PaddleOCR page-extraction service with normalized confidence metadata
 - Backend API built with FastAPI
 - React + Vite frontend for file upload and response display
 - Foundation for embeddings, vector search (`pgvector`), and RAG Q&A
@@ -48,6 +49,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 ### Document Processing & ML
 
 - `PyMuPDF` (`pymupdf` / `fitz`): PDF text extraction
+- `PaddleOCR` + `PaddlePaddle`: OCR inference for scanned PDF pages
 - `scikit-learn`: Machine learning for OCR decision making
 - `joblib`: Model serialization for the trained OCR decision model
 - `pandas`: Data handling and feature engineering for ML models
@@ -186,6 +188,26 @@ Alternatively, you can:
 - Retrieve extracted text → `GET /documents/{document_id}/text` after extraction
 - List all documents → `GET /documents` to see all uploaded/processed documents
 
+### PaddleOCR service
+
+`backend/app/extraction/paddle_ocr_extractor.py` provides the focused OCR
+service used for scanned PDFs. It:
+
+- lazily initializes and caches a CPU-backed PP-OCRv6 engine;
+- renders PDF pages individually at a configurable DPI;
+- returns document text plus page-level text, line confidence, bounding boxes,
+  word counts, and average page confidence;
+- keeps downloaded PaddleOCR models in the persistent `paddle_cache` Docker
+  volume.
+
+The service is intentionally separate from the OCR decision engine. Wiring it
+into `extraction_pipeline.py` is the next integration step.
+
+Configuration is available through `PADDLE_OCR_LANGUAGE`,
+`PADDLE_OCR_VERSION`, `PADDLE_OCR_DEVICE`, `OCR_RENDER_DPI`,
+`OCR_TEXT_SCORE_THRESHOLD`, `OCR_USE_DOC_ORIENTATION`, and
+`OCR_USE_TEXTLINE_ORIENTATION`; see `.env.example` for defaults.
+
 ## Project Structure
 
 ```text
@@ -203,6 +225,7 @@ DocuMindAI/
 |  |  |  |- ocr_decision_engine.py        # ML-based OCR decision
 |  |  |  |- pdf_feature_extractor.py      # Feature extraction from PDFs
 |  |  |  |- pdf_extractor.py              # Text extraction from PDFs
+|  |  |  |- paddle_ocr_extractor.py       # PaddleOCR page extraction service
 |  |  |  `- extraction_pipeline.py        # Orchestrates extraction
 |  |  |- indexing/
 |  |  |  |- text_chunker.py               # Text chunking logic
@@ -289,13 +312,14 @@ Vite runs with host `0.0.0.0` (see frontend scripts).
 - Document upload and metadata management
 - OCR decision engine with layout-aware ML model
 - PDF text extraction using PyMuPDF
+- PaddleOCR service for page rendering and normalized OCR output
 - Intelligent extraction strategy (OCR vs direct extraction)
 - Text chunking with configurable overlap
 - Chunk persistence and word-level positioning
 
 ## Planned Next Steps
 
-- OCR extraction pipeline for documents requiring OCR
+- Wire the PaddleOCR service into the selective extraction pipeline
 - Embedding generation for document chunks
 - Vector indexing with `pgvector` for semantic search
 - Semantic search endpoints over the document corpus
