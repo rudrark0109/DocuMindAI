@@ -26,11 +26,15 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/documind_ai
       FRONTEND_ORIGIN: http://localhost:5173
+      PADDLE_OCR_LANGUAGE: en
+      PADDLE_OCR_VERSION: PP-OCRv6
+      PADDLE_OCR_DEVICE: cpu
     ports:
       - "8000:8000"
     volumes:
       - ./storage:/app/storage
       - huggingface_cache:/root/.cache/huggingface
+      - paddle_cache:/root/.paddlex
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,3 +55,4 @@ services:
 volumes:
   documind_postgres_data:
   huggingface_cache:
+  paddle_cache:
