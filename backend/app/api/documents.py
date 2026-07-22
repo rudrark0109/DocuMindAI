@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from backend.app.db.database import get_db
 from backend.app.db.models import Document
 from backend.app.db.chunk_model import DocumentChunk
 from backend.app.indexing.chunking_pipeline import create_document_chunks
-from backend.app.schemas.schemas import DocumentResponse
+from backend.app.schemas.schemas import DocumentProcessingResponse, DocumentResponse
 from backend.app.services.file_storage import save_uploaded_file
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
 from backend.app.extraction.extraction_pipeline import process_document
@@ -21,7 +22,97 @@ ALLOWED_CONTENT_TYPES = [
     "application/pdf",
 ]
 
-@router.post("/upload")
+COMPLETED_EXTRACTION_STATUSES = {"text_extracted", "text_extraction_empty"}
+
+
+def _persist_extraction_result(document: Document, extraction_result: dict) -> None:
+    """Copy a normalized extraction result onto its document record."""
+
+    document.extracted_text = extraction_result["text"]
+    document.extraction_method = extraction_result["extraction_method"]
+    document.ocr_required = extraction_result["ocr_required"]
+    document.ocr_confidence = (
+        str(extraction_result["ocr_confidence"])
+        if extraction_result["ocr_confidence"] is not None
+        else None
+    )
+    document.ocr_model_version = extraction_result["ocr_model_version"]
+    document.processing_status = (
+        "text_extracted"
+        if extraction_result["status"] == "success"
+        else "text_extraction_empty"
+    )
+
+
+def _processing_response(
+    document: Document,
+    extraction_result: dict | None = None,
+) -> dict:
+    """Build the shared response returned by automatic and manual extraction."""
+
+    text = document.extracted_text or ""
+    extraction_status = (
+        extraction_result["status"]
+        if extraction_result is not None
+        else ("success" if document.processing_status == "text_extracted" else "empty")
+    )
+
+    return {
+        "id": document.id,
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "original_filename": document.original_filename,
+        "saved_filename": document.saved_filename,
+        "file_path": document.file_path,
+        "content_type": document.content_type,
+        "file_size": document.file_size,
+        "processing_status": document.processing_status,
+        "extraction_status": extraction_status,
+        "ocr_required": document.ocr_required,
+        "ocr_confidence": (
+            float(document.ocr_confidence)
+            if document.ocr_confidence is not None
+            else None
+        ),
+        "extraction_method": document.extraction_method,
+        "character_count": (
+            extraction_result["character_count"]
+            if extraction_result is not None
+            else len(text)
+        ),
+        "word_count": (
+            extraction_result["word_count"]
+            if extraction_result is not None
+            else len(text.split())
+        ),
+        "page_count": (
+            extraction_result["page_count"]
+            if extraction_result is not None
+            else None
+        ),
+        "created_at": document.created_at,
+    }
+
+
+def _mark_extraction_failed(document: Document, db: Session) -> None:
+    document.processing_status = "extraction_failed"
+    db.commit()
+    logger.exception(
+        "Document extraction failed",
+        extra={"document_id": document.id},
+    )
+
+
+@router.post(
+    "/upload",
+    response_model=DocumentProcessingResponse,
+    status_code=201,
+    summary="Upload and automatically process a PDF",
+    description=(
+        "Stores the PDF, decides whether OCR is required, routes it to PyMuPDF "
+        "or PaddleOCR, and persists the extracted text in one request."
+    ),
+)
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
@@ -36,14 +127,34 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         file_path = saved_file_info["file_path"],
         content_type = saved_file_info["content_type"],
         file_size = int(saved_file_info["file_size"]),
-        processing_status = "uploaded",
+        processing_status = "processing",
     )
 
     db.add(document)
     db.commit()
     db.refresh(document)
 
-    return document
+    try:
+        extraction_result = await run_in_threadpool(
+            process_document,
+            document.file_path,
+        )
+    except Exception as exc:
+        _mark_extraction_failed(document, db)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Document extraction failed.",
+                "document_id": document.id,
+                "processing_status": document.processing_status,
+            },
+        ) from exc
+
+    _persist_extraction_result(document, extraction_result)
+    db.commit()
+    db.refresh(document)
+
+    return _processing_response(document, extraction_result)
 
 @router.get("", response_model=list[DocumentResponse])
 def get_all_documents(db: Session = Depends(get_db)):
@@ -84,15 +195,26 @@ def get_ocr_verdict(
             detail="OCR verdict currently supports PDF documents only.",
         )
 
-    verdict = predict_ocr_requirement(document.file_path)
+    if document.ocr_required is not None:
+        verdict = {
+            "ocr_required": document.ocr_required,
+            "confidence": (
+                float(document.ocr_confidence)
+                if document.ocr_confidence is not None
+                else None
+            ),
+            "model_version": document.ocr_model_version,
+        }
+    else:
+        verdict = predict_ocr_requirement(document.file_path)
+        document.ocr_required = verdict["ocr_required"]
+        document.ocr_confidence = str(verdict["confidence"])
+        document.ocr_model_version = verdict["model_version"]
+        if document.processing_status == "uploaded":
+            document.processing_status = "ocr_checked"
 
-    document.ocr_required = verdict["ocr_required"]
-    document.ocr_confidence = str(verdict["confidence"])
-    document.ocr_model_version = verdict["model_version"]
-    document.processing_status = "ocr_checked"
-
-    db.commit()
-    db.refresh(document)
+        db.commit()
+        db.refresh(document)
 
     return {
         "document_id": document.id,
@@ -101,7 +223,11 @@ def get_ocr_verdict(
         "ocr_verdict": verdict,
     }
 
-@router.post("/{document_id}/extract")
+@router.post(
+    "/{document_id}/extract",
+    response_model=DocumentProcessingResponse,
+    summary="Retry extraction or return the existing extraction result",
+)
 def extract_document_text(
     document_id: str,
     db: Session = Depends(get_db),
@@ -126,46 +252,37 @@ def extract_document_text(
             detail="Text extraction currently supports PDF documents only.",
         )
 
+    if document.processing_status in COMPLETED_EXTRACTION_STATUSES:
+        return _processing_response(document)
+
+    if document.processing_status == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="Document extraction is already in progress.",
+        )
+
+    document.processing_status = "processing"
+    db.commit()
+
     try:
         extraction_result = process_document(document.file_path)
     except Exception as exc:
-        document.processing_status = "extraction_failed"
-        db.commit()
-        logger.exception(
-            "Document extraction failed", extra={"document_id": document_id}
-        )
-        raise HTTPException(status_code=500, detail="Document extraction failed.") from exc
+        _mark_extraction_failed(document, db)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Document extraction failed.",
+                "document_id": document.id,
+                "processing_status": document.processing_status,
+            },
+        ) from exc
 
-    document.extracted_text = extraction_result["text"]
-    document.extraction_method = extraction_result["extraction_method"]
-    document.ocr_required = extraction_result["ocr_required"]
-    document.ocr_confidence = (
-        str(extraction_result["ocr_confidence"])
-        if extraction_result["ocr_confidence"] is not None
-        else None
-    )
-    document.ocr_model_version = extraction_result["ocr_model_version"]
-    document.processing_status = (
-        "text_extracted"
-        if extraction_result["status"] == "success"
-        else "text_extraction_empty"
-    )
+    _persist_extraction_result(document, extraction_result)
 
     db.commit()
     db.refresh(document)
 
-    return {
-        "document_id": document.id,
-        "document_code": document.document_code,
-        "status": document.processing_status,
-        "ocr_required": document.ocr_required,
-        "ocr_confidence": document.ocr_confidence,
-        "extraction_method": document.extraction_method,
-        "extraction_status": extraction_result["status"],
-        "character_count": extraction_result["character_count"],
-        "word_count": extraction_result["word_count"],
-        "page_count": extraction_result["page_count"],
-    }
+    return _processing_response(document, extraction_result)
 
 @router.get("/{document_id}/text")
 def get_document_text(
@@ -188,7 +305,7 @@ def get_document_text(
     if not document.extracted_text:
         raise HTTPException(
             status_code=404,
-            detail="No extracted text found. Run extraction first.",
+            detail="No extracted text is available for this document.",
         )
 
     return {

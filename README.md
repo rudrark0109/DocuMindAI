@@ -16,7 +16,7 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 
 ## Features
 
-- Upload and manage PDF documents via API or React frontend
+- Upload, route, and extract PDF documents through one API request
 - Store document metadata and processing status in PostgreSQL
 - **Extract text from PDFs** using intelligent OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
@@ -96,6 +96,11 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Extraction Pipeline** (`backend/app/extraction/extraction_pipeline.py`):
   - Routes direct-text PDFs to PyMuPDF and OCR-required PDFs to PaddleOCR
   - Returns a consistent extraction contract for either strategy
+- **Automatic Upload Orchestration** (`POST /documents/upload`):
+  - Persists the uploaded PDF with a `processing` status
+  - Runs the OCR decision and selected extraction strategy immediately
+  - Persists the text, OCR metadata, extraction method, and final status
+  - Returns the complete processing summary in the upload response
 - **New API Endpoints**:
   - `POST /documents/{document_id}/ocr-verdict` - Get OCR decision for a document
   - `POST /documents/{document_id}/extract` - Extract text from a document
@@ -154,14 +159,14 @@ Base URL: `http://127.0.0.1:8000`
 
 ### Document Management
 
-- `POST /documents/upload` - Upload a PDF document
+- `POST /documents/upload` - Upload and automatically extract a PDF document
 - `GET /documents` - List uploaded documents (newest first)
 - `GET /documents/{document_id}` - Fetch document metadata by ID
 
-### Document Processing
+### Document Processing and Diagnostics
 
-- `POST /documents/{document_id}/ocr-verdict` - Determine if OCR is needed for the document
-- `POST /documents/{document_id}/extract` - Extract text from the document (intelligently uses OCR decision)
+- `POST /documents/{document_id}/ocr-verdict` - Return the persisted OCR decision, or calculate it for a legacy document
+- `POST /documents/{document_id}/extract` - Return an existing extraction idempotently, or retry a failed/legacy document
 - `GET /documents/{document_id}/text` - Retrieve extracted text for a document
 - `POST /documents/{document_id}/chunk` - Chunk extracted text and persist chunks
 
@@ -171,21 +176,26 @@ Base URL: `http://127.0.0.1:8000`
 
 ## Document Processing Workflow
 
-The typical workflow for processing a document is:
+The normal client workflow is:
 
-1. **Upload** → `POST /documents/upload` - Upload a PDF file
-2. **Extract** → `POST /documents/{document_id}/extract` - Extract text from the PDF
-   - Automatically checks if OCR is needed using the ML model
-   - If OCR not needed, extracts text directly using PyMuPDF
-   - If OCR is needed, runs PaddleOCR page-by-page and persists the recognized text
+1. **Upload and extract** → `POST /documents/upload`
+   - Stores the PDF and creates its document record
+   - Automatically checks whether OCR is needed using the ML model
+   - Routes text PDFs to PyMuPDF and scanned PDFs to PaddleOCR
+   - Persists the extracted text and processing metadata
+   - Returns the document ID, final status, OCR decision, extraction method, and counts
+2. **Read text** → `GET /documents/{document_id}/text` - Retrieve the persisted result
 3. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
    - Creates overlapping chunks for better context retention
    - Persists chunks with word-level positioning for precise retrieval
 
-Alternatively, you can:
+The decision and extraction POST endpoints remain available for diagnostics,
+legacy documents, and retries. Calling extraction again for a successfully
+processed document returns the persisted result without running the pipeline a
+second time. A request made while extraction is in progress returns HTTP 409.
 
-- Check OCR requirement first → `POST /documents/{document_id}/ocr-verdict` before extraction
-- Retrieve extracted text → `GET /documents/{document_id}/text` after extraction
+You can also:
+
 - List all documents → `GET /documents` to see all uploaded/processed documents
 
 ### PaddleOCR service

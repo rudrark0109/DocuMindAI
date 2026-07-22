@@ -127,7 +127,7 @@ That separation keeps the project production-minded and avoids a single monolith
 
 - FastAPI backend is operational
 - Document upload and management
-  - `POST /documents/upload` - Upload PDF documents
+  - `POST /documents/upload` - Upload and automatically extract PDF documents
   - `GET /documents` - List all documents
   - `GET /documents/{document_id}` - Retrieve document metadata
 - OCR decision engine
@@ -149,8 +149,16 @@ The current upload pipeline performs the following steps:
 1. Validate the file type (PDF only)
 2. Generate a custom document code
 3. Store the file locally
-4. Store metadata in PostgreSQL
-5. Return document ID for downstream processing
+4. Store metadata in PostgreSQL with a `processing` status
+5. Run the OCR Decision Engine
+6. Route native PDFs to PyMuPDF or scanned PDFs to PaddleOCR
+7. Persist the extracted text, routing metadata, and final status
+8. Return the document ID and complete extraction summary
+
+Clients no longer need to call the OCR-decision and extraction endpoints after
+upload. Those endpoints remain available for diagnostics, legacy records, and
+safe retries. Completed documents are returned idempotently instead of being
+processed twice, while concurrent extraction attempts receive HTTP 409.
 
 ### Extraction Pipeline
 
