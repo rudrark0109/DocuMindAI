@@ -11,3 +11,5 @@ pandas
 joblib
 scikit-learn==1.8.0
 sentence-transformers
+paddlepaddle==3.3.0
+paddleocr==3.7.0
