@@ -18,7 +18,9 @@ RUN apt-get update \
 
 COPY backend ./backend
 COPY models ./models
+COPY alembic.ini .
+COPY migrations ./migrations
 
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"]

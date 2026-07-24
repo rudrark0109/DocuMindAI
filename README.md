@@ -294,6 +294,9 @@ Database data, uploaded documents, and the downloaded embedding-model cache are
 persisted across container restarts. To follow startup logs, run
 `docker compose logs -f`.
 
+The backend runs `alembic upgrade head` before starting Uvicorn, so both fresh
+and existing Docker volumes are migrated automatically.
+
 ### Run directly on the host
 
 Use Python 3.12 for the backend and Node.js 22 for the frontend. First create the
@@ -315,6 +318,7 @@ pip install -r requirements.txt
 Then run the backend:
 
 ```bash
+alembic upgrade head
 uvicorn backend.app.main:app --reload
 ```
 
@@ -327,6 +331,19 @@ npm run dev
 ```
 
 Vite runs with host `0.0.0.0` (see frontend scripts).
+
+### Pre-search pipeline verification
+
+With the Docker stack running, exercise a real two-page mixed PDF through
+selective OCR, chunking, embeddings, and PostgreSQL/pgvector validation:
+
+```bash
+python scripts/verify_pre_search_pipeline.py
+```
+
+The command also repeats the embedding endpoint and verifies that it creates
+no duplicate vectors. See `docs/pre-search-readiness.md` for the recorded
+validation result and current limitations.
 
 ## Completed Features
 
