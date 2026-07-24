@@ -10,17 +10,8 @@ def _safe_divide(numerator: float, denominator: float) -> float:
     return numerator / denominator
 
 
-def extract_pdf_features(file_path: str) -> dict:
-    pdf_path = Path(file_path)
-
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF file not found: {file_path}")
-
-    if pdf_path.suffix.lower() != ".pdf":
-        raise ValueError("Feature extractor currently supports PDF files only.")
-
-    document = fitz.open(pdf_path)
-
+def _extract_features(pages) -> dict:
+    """Aggregate model features for one or more PyMuPDF pages."""
     full_text = ""
     text_block_count = 0
     image_count = 0
@@ -35,7 +26,7 @@ def extract_pdf_features(file_path: str) -> dict:
     total_image_area = 0.0
     largest_image_area = 0.0
 
-    for page in document:
+    for page in pages:
         page_rect = page.rect
         page_width = float(page_rect.width)
         page_height = float(page_rect.height)
@@ -49,7 +40,6 @@ def extract_pdf_features(file_path: str) -> dict:
 
         for block in blocks:
             block_type = block.get("type")
-
             x0, y0, x1, y1 = block.get("bbox", [0, 0, 0, 0])
             block_area = max(0.0, (x1 - x0) * (y1 - y0))
 
@@ -57,16 +47,12 @@ def extract_pdf_features(file_path: str) -> dict:
                 text_block_count += 1
                 total_text_area += block_area
                 largest_text_block_area = max(largest_text_block_area, block_area)
-
             elif block_type == 1:
                 image_count += 1
                 total_image_area += block_area
                 largest_image_area = max(largest_image_area, block_area)
 
-    document.close()
-
     text = full_text.strip()
-
     char_count = len(text)
     words = text.split()
     word_count = len(words)
@@ -98,31 +84,54 @@ def extract_pdf_features(file_path: str) -> dict:
         "alphabetic_ratio": _safe_divide(alphabetic_count, char_count),
         "digit_ratio": _safe_divide(digit_count, char_count),
         "symbol_ratio": _safe_divide(symbol_count, char_count),
-
         "text_block_count": text_block_count,
         "image_count": image_count,
-
         "page_width": page_width,
         "page_height": page_height,
         "page_area": page_area,
-
         "chars_per_page_area": _safe_divide(char_count, page_area),
         "words_per_page_area": _safe_divide(word_count, page_area),
-
         "layout_text_block_count": text_block_count,
         "layout_image_count": image_count,
-
         "total_text_area": total_text_area,
         "avg_text_block_area": avg_text_block_area,
         "largest_text_block_area": largest_text_block_area,
-
         "total_image_area": total_image_area,
         "avg_image_area": avg_image_area,
         "largest_image_area": largest_image_area,
-
         "text_area_ratio": _safe_divide(total_text_area, page_area),
         "image_area_ratio": _safe_divide(total_image_area, page_area),
         "largest_image_area_ratio": _safe_divide(largest_image_area, page_area),
         "largest_text_block_ratio": _safe_divide(largest_text_block_area, page_area),
         "text_to_image_area_ratio": _safe_divide(total_text_area, total_image_area),
     }
+
+
+def _validate_pdf_path(file_path: str) -> Path:
+    pdf_path = Path(file_path)
+
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file not found: {file_path}")
+
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError("Feature extractor currently supports PDF files only.")
+
+    return pdf_path
+
+
+def extract_pdf_features(file_path: str) -> dict:
+    pdf_path = _validate_pdf_path(file_path)
+
+    with fitz.open(pdf_path) as document:
+        return _extract_features(document)
+
+
+def extract_pdf_page_features(file_path: str) -> list[dict]:
+    """Return model-ready features independently for every page in a PDF."""
+    pdf_path = _validate_pdf_path(file_path)
+
+    with fitz.open(pdf_path) as document:
+        return [
+            {"page_number": page_number, "features": _extract_features([page])}
+            for page_number, page in enumerate(document, start=1)
+        ]

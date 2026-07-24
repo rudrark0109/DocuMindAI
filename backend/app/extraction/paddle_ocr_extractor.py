@@ -34,12 +34,17 @@ def get_ocr_engine():
     )
 
 
-def _render_pdf_pages(pdf_path: Path) -> Iterable[tuple[int, np.ndarray]]:
+def _render_pdf_pages(
+    pdf_path: Path,
+    page_numbers: set[int] | None = None,
+) -> Iterable[tuple[int, np.ndarray]]:
     scale = settings.ocr_render_dpi / 72
     matrix = fitz.Matrix(scale, scale)
 
     with fitz.open(pdf_path) as document:
         for page_number, page in enumerate(document, start=1):
+            if page_numbers is not None and page_number not in page_numbers:
+                continue
             pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
             image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
                 pixmap.height, pixmap.width, pixmap.n
@@ -76,7 +81,10 @@ def _parse_result(result: Any) -> tuple[list[dict], str]:
     return lines, "\n".join(line["text"] for line in lines)
 
 
-def extract_text_with_paddleocr(file_path: str) -> dict:
+def extract_text_with_paddleocr(
+    file_path: str,
+    page_numbers: set[int] | None = None,
+) -> dict:
     pdf_path = Path(file_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"File not found: {pdf_path}")
@@ -88,7 +96,7 @@ def extract_text_with_paddleocr(file_path: str) -> dict:
     engine = get_ocr_engine()
     extracted_pages = []
 
-    for page_number, page_image in _render_pdf_pages(pdf_path):
+    for page_number, page_image in _render_pdf_pages(pdf_path, page_numbers):
         predictions = list(engine.predict(page_image))
         page_lines = []
         page_text_parts = []
