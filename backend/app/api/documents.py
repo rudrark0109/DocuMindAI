@@ -10,10 +10,15 @@ from backend.app.db.models import Document
 from backend.app.db.chunk_model import DocumentChunk
 from backend.app.indexing.chunking_pipeline import create_document_chunks
 from backend.app.schemas.schemas import DocumentProcessingResponse, DocumentResponse
-from backend.app.services.file_storage import save_uploaded_file
+from backend.app.services.file_storage import (
+    FileTooLargeError,
+    delete_saved_file,
+    save_uploaded_file,
+)
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
 from backend.app.extraction.extraction_pipeline import process_document
 from backend.app.indexing.embedding_pipeline import embed_document_chunks
+from backend.app.indexing.indexing_pipeline import rebuild_document_index
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger(__name__)
@@ -47,6 +52,7 @@ def _persist_extraction_result(document: Document, extraction_result: dict) -> N
 def _processing_response(
     document: Document,
     extraction_result: dict | None = None,
+    indexing_result: dict | None = None,
 ) -> dict:
     """Build the shared response returned by automatic and manual extraction."""
 
@@ -91,6 +97,13 @@ def _processing_response(
             else None
         ),
         "created_at": document.created_at,
+        "chunk_count": indexing_result["chunk_count"] if indexing_result else 0,
+        "embedded_chunk_count": (
+            indexing_result["embedded_chunk_count"] if indexing_result else 0
+        ),
+        "embedding_model": (
+            indexing_result["embedding_model"] if indexing_result else None
+        ),
     }
 
 
@@ -110,14 +123,18 @@ def _mark_extraction_failed(document: Document, db: Session) -> None:
     summary="Upload and automatically process a PDF",
     description=(
         "Stores the PDF, decides whether OCR is required, routes it to PyMuPDF "
-        "or PaddleOCR, and persists the extracted text in one request."
+        "or PaddleOCR per page, then persists text, chunks, and embeddings in "
+        "one request."
     ),
 )
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
 
-    saved_file_info = await save_uploaded_file(file)
+    try:
+        saved_file_info = await save_uploaded_file(file)
+    except FileTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     
     document = Document(
         id = str(uuid4()),
@@ -130,9 +147,14 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         processing_status = "processing",
     )
 
-    db.add(document)
-    db.commit()
-    db.refresh(document)
+    try:
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+    except Exception:
+        db.rollback()
+        delete_saved_file(document.file_path)
+        raise
 
     try:
         extraction_result = await run_in_threadpool(
@@ -154,7 +176,32 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     db.commit()
     db.refresh(document)
 
-    return _processing_response(document, extraction_result)
+    indexing_result = None
+    if extraction_result["status"] == "success":
+        try:
+            indexing_result = await run_in_threadpool(
+                rebuild_document_index,
+                document,
+                db,
+            )
+            document.processing_status = indexing_result["status"]
+        except Exception as exc:
+            document.processing_status = "indexing_failed"
+            db.commit()
+            logger.exception(
+                "Document indexing failed",
+                extra={"document_id": document.id},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "Document indexing failed.",
+                    "document_id": document.id,
+                    "processing_status": document.processing_status,
+                },
+            ) from exc
+
+    return _processing_response(document, extraction_result, indexing_result)
 
 @router.get("", response_model=list[DocumentResponse])
 def get_all_documents(db: Session = Depends(get_db)):

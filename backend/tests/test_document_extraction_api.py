@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 
 from backend.app.api.documents import extract_document_text, upload_document
+from backend.app.services.file_storage import FileTooLargeError
 
 
 def make_document():
@@ -143,14 +144,21 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
             "file_size": 456,
         }
 
+    @patch("backend.app.api.documents.rebuild_document_index")
     @patch("backend.app.api.documents.process_document")
     @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_runs_native_pdf_pipeline(self, save_file, process):
+    def test_upload_runs_native_pdf_pipeline(self, save_file, process, rebuild_index):
         save_file.return_value = self.saved_file
         process.return_value = extraction_result(
             method="pymupdf",
             ocr_required="NO",
         )
+        rebuild_index.return_value = {
+            "status": "embedded",
+            "chunk_count": 1,
+            "embedded_chunk_count": 1,
+            "embedding_model": "test-model",
+        }
         db = MagicMock()
 
         response = asyncio.run(upload_document(self.file, db))
@@ -158,14 +166,22 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
         process.assert_called_once_with(self.saved_file["file_path"])
         self.assertEqual(response["extraction_method"], "pymupdf")
         self.assertEqual(response["ocr_required"], "NO")
-        self.assertEqual(response["processing_status"], "text_extracted")
+        self.assertEqual(response["processing_status"], "embedded")
+        self.assertEqual(response["embedded_chunk_count"], 1)
         self.assertEqual(db.commit.call_count, 2)
 
+    @patch("backend.app.api.documents.rebuild_document_index")
     @patch("backend.app.api.documents.process_document")
     @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_runs_paddleocr_pipeline(self, save_file, process):
+    def test_upload_runs_paddleocr_pipeline(self, save_file, process, rebuild_index):
         save_file.return_value = self.saved_file
         process.return_value = extraction_result()
+        rebuild_index.return_value = {
+            "status": "embedded",
+            "chunk_count": 1,
+            "embedded_chunk_count": 1,
+            "embedding_model": "test-model",
+        }
         db = MagicMock()
 
         response = asyncio.run(upload_document(self.file, db))
@@ -173,6 +189,7 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
         self.assertEqual(response["extraction_method"], "paddleocr")
         self.assertEqual(response["ocr_required"], "YES")
         self.assertEqual(response["extraction_status"], "success")
+        rebuild_index.assert_called_once()
 
     @patch("backend.app.api.documents.process_document")
     @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
@@ -207,6 +224,38 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 500)
         self.assertEqual(raised.exception.detail["document_id"], document.id)
         self.assertEqual(db.commit.call_count, 2)
+
+    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
+    def test_upload_rejects_oversized_file(self, save_file):
+        save_file.side_effect = FileTooLargeError("File exceeds the 25 MB limit.")
+
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(upload_document(self.file, MagicMock()))
+
+        self.assertEqual(raised.exception.status_code, 413)
+
+    @patch("backend.app.api.documents.logger.exception")
+    @patch("backend.app.api.documents.rebuild_document_index")
+    @patch("backend.app.api.documents.process_document")
+    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
+    def test_upload_persists_indexing_failure(
+        self,
+        save_file,
+        process,
+        rebuild_index,
+        _log_exception,
+    ):
+        save_file.return_value = self.saved_file
+        process.return_value = extraction_result()
+        rebuild_index.side_effect = RuntimeError("embedding failed")
+        db = MagicMock()
+
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(upload_document(self.file, db))
+
+        document = db.add.call_args.args[0]
+        self.assertEqual(document.processing_status, "indexing_failed")
+        self.assertEqual(raised.exception.status_code, 500)
 
 
 if __name__ == "__main__":

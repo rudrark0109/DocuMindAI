@@ -16,10 +16,11 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 
 ## Features
 
-- Upload, route, and extract PDF documents through one API request
+- Upload, selectively extract, chunk, and embed PDF documents through one API request
 - Store document metadata and processing status in PostgreSQL
 - **Extract text from PDFs** using intelligent OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
+- Generate and persist normalized 384-dimensional chunk embeddings
 - ML-based OCR decision engine with layout-aware feature extraction
 - PaddleOCR page-extraction service with normalized confidence metadata
 - Backend API built with FastAPI
@@ -169,6 +170,7 @@ Base URL: `http://127.0.0.1:8000`
 - `POST /documents/{document_id}/extract` - Return an existing extraction idempotently, or retry a failed/legacy document
 - `GET /documents/{document_id}/text` - Retrieve extracted text for a document
 - `POST /documents/{document_id}/chunk` - Chunk extracted text and persist chunks
+- `POST /documents/{document_id}/embed` - Embed pending chunks
 
 ### Interactive Documentation
 
@@ -178,16 +180,20 @@ Base URL: `http://127.0.0.1:8000`
 
 The normal client workflow is:
 
-1. **Upload and extract** → `POST /documents/upload`
+1. **Upload and index** → `POST /documents/upload`
    - Stores the PDF and creates its document record
    - Automatically checks whether OCR is needed using the ML model
-   - Routes text PDFs to PyMuPDF and scanned PDFs to PaddleOCR
-   - Persists the extracted text and processing metadata
-   - Returns the document ID, final status, OCR decision, extraction method, and counts
+   - Routes each native page to PyMuPDF and OCR-required pages to PaddleOCR
+   - Persists extracted text, processing metadata, chunks, and embeddings
+   - Returns document, extraction, chunk, and embedding counts
 2. **Read text** → `GET /documents/{document_id}/text` - Retrieve the persisted result
 3. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
    - Creates overlapping chunks for better context retention
    - Persists chunks with word-level positioning for precise retrieval
+
+The chunk and embed endpoints remain available for diagnostics and legacy
+documents. New successful uploads run both stages automatically. Rebuilding an
+index replaces the document's existing chunks and vectors atomically.
 
 The decision and extraction POST endpoints remain available for diagnostics,
 legacy documents, and retries. Calling extraction again for a successfully
@@ -220,6 +226,8 @@ Configuration is available through `PADDLE_OCR_LANGUAGE`,
 `OCR_USE_TEXTLINE_ORIENTATION`. `OCR_ENABLE_MKLDNN` defaults to `false` for
 PP-OCRv6 compatibility with the pinned PaddlePaddle CPU runtime. See
 `.env.example` for defaults.
+
+`MAX_UPLOAD_SIZE_MB` limits uploads before processing and defaults to 25 MB.
 
 ## Project Structure
 
@@ -329,12 +337,12 @@ Vite runs with host `0.0.0.0` (see frontend scripts).
 - Intelligent extraction strategy (OCR vs direct extraction)
 - Text chunking with configurable overlap
 - Chunk persistence and word-level positioning
+- Automatic chunk embedding with `sentence-transformers/all-MiniLM-L6-v2`
+- Atomic replacement of a document's chunks and vectors during re-indexing
 
 ## Planned Next Steps
 
 - Add OCR quality benchmarks and a Tesseract fallback
-- Embedding generation for document chunks
-- Vector indexing with `pgvector` for semantic search
 - Semantic search endpoints over the document corpus
 - RAG chat experience for document Q&A
 - Improved document status tracking with queued/processing/completed/failed states

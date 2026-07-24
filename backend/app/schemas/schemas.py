@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class DocumentProcessingResponse(BaseModel):
@@ -19,10 +19,15 @@ class DocumentProcessingResponse(BaseModel):
     character_count: int = 0
     word_count: int = 0
     page_count: int | None = None
+    chunk_count: int = 0
+    embedded_chunk_count: int = 0
+    embedding_model: str | None = None
     created_at: datetime
 
 
 class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     document_code: str
     original_filename: str
@@ -36,6 +41,3 @@ class DocumentResponse(BaseModel):
     ocr_model_version: str | None = None
     extraction_method: str | None = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True

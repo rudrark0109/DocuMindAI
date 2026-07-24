@@ -1,11 +1,18 @@
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Column, Integer, String, Text, ForeignKey
+from sqlalchemy import DateTime, Column, Integer, String, Text, ForeignKey, UniqueConstraint
 
 from backend.app.db.database import Base
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "chunk_index",
+            name="uq_document_chunks_document_index",
+        ),
+    )
     id = Column(String, primary_key=True, index=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=False, index=True)
     chunk_index = Column(Integer, nullable=False)
