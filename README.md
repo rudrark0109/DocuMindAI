@@ -128,14 +128,6 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Enhanced Document Model**:
   - New fields: `extracted_text`, `extraction_method`, `ocr_required`, `ocr_confidence`, `ocr_model_version`
 
-### Supporting Work
-
-- Notebook work added for extraction and model exploration:
-  - `notebooks/01_extraction_quality_analyzing.ipynb`
-  - `notebooks/02_model.ipynb`
-  - `notebooks/03_layout_feature_extraction.ipynb`
-  - `notebooks/04_train_with_layout_features.ipynb`
-
 ## Current State
 
 DocuMindAI now supports a complete document intake and processing pipeline:
@@ -260,7 +252,6 @@ DocuMindAI/
 |- models/
 |  |- ocr_decision_model.joblib          # Trained OCR decision model
 |  `- ocr_model_metadata.json            # Model metadata
-|- notebooks/                            # Jupyter notebooks for experimentation
 |- storage/                              # Uploaded files storage
 |- requirements.txt
 `- README.md

@@ -274,9 +274,10 @@ Labels are:
 
 ### Current Result Snapshot
 
-The trained model shows strong performance on the evaluation set. The feature engineering prioritizes layout characteristics to make robust decisions about document extractability. Model performance and improvements are documented in the notebooks:
-- `notebooks/03_layout_feature_extraction.ipynb` - Feature engineering process
-- `notebooks/04_train_with_layout_features.ipynb` - Model training and evaluation
+The trained model shows strong performance on the evaluation set. The feature
+engineering prioritizes layout characteristics to make robust decisions about
+document extractability. The reproducible runtime artifacts are stored under
+`models/`, with current limitations recorded in the project documentation.
 
 ## Completed Work
 
@@ -470,7 +471,6 @@ Why it changed:
   - `core/` - Configuration and settings
 - `frontend/` - React + Vite frontend
 - `models/` - Serialized ML models and metadata
-- `notebooks/` - Jupyter notebooks for experimentation and analysis
 - `storage/` - Local file storage for uploaded documents
 - `docs/` - Project documentation
 - `data/` - Training data and datasets
