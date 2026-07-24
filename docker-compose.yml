@@ -26,6 +26,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/documind_ai
       FRONTEND_ORIGIN: http://localhost:5173
+      MAX_UPLOAD_SIZE_MB: 25
       PADDLE_OCR_LANGUAGE: en
       PADDLE_OCR_VERSION: PP-OCRv6
       PADDLE_OCR_DEVICE: cpu

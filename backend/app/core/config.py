@@ -6,6 +6,7 @@ class Settings(BaseSettings):
         "postgresql+psycopg2://postgres:postgres@localhost:5433/documind_ai"
     )
     frontend_origin: str = "http://localhost:5173"
+    max_upload_size_mb: int = 25
     paddle_ocr_language: str = "en"
     paddle_ocr_version: str = "PP-OCRv6"
     paddle_ocr_device: str = "cpu"
