@@ -3,6 +3,7 @@ uvicorn
 python-multipart
 pydantic_settings
 sqlalchemy
+alembic
 psycopg2-binary
 python-dotenv
 pymupdf
