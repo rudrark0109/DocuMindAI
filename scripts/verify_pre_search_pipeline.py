@@ -1,11 +1,25 @@
-"""Run a reproducible mixed-PDF upload-to-vector smoke test."""
+"""Run a reproducible mixed-PDF upload-to-search smoke test."""
 import argparse
 import tempfile
+import time
 from pathlib import Path
 
 import fitz
 import psycopg2
 import requests
+
+
+def wait_for_api(api_url: str, timeout_seconds: int = 120) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            response = requests.get(f"{api_url}/health", timeout=5)
+            if response.ok:
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    raise TimeoutError(f"Backend did not become ready within {timeout_seconds}s.")
 
 
 def create_mixed_pdf(path: Path) -> None:
@@ -33,6 +47,7 @@ def create_mixed_pdf(path: Path) -> None:
 
 
 def verify(api_url: str, database_url: str) -> None:
+    wait_for_api(api_url)
     with tempfile.TemporaryDirectory() as temp_dir:
         pdf_path = Path(temp_dir) / "mixed-pre-search-smoke.pdf"
         create_mixed_pdf(pdf_path)
@@ -84,6 +99,22 @@ def verify(api_url: str, database_url: str) -> None:
     repeat.raise_for_status()
     assert repeat.json()["embedding_result"]["status"] == "no_pending_chunks"
 
+    search_response = requests.post(
+        f"{api_url}/search",
+        json={
+            "query": "quarterly revenue",
+            "top_k": 3,
+            "similarity_threshold": 0.0,
+            "document_id": document_id,
+        },
+        timeout=120,
+    )
+    search_response.raise_for_status()
+    search_result = search_response.json()
+    assert search_result["result_count"] >= 1, search_result
+    assert search_result["results"][0]["document_id"] == document_id, search_result
+    assert "quarterly revenue" in search_result["results"][0]["text"].lower()
+
     print(
         "PASS:",
         f"document={document_id}",
@@ -91,15 +122,16 @@ def verify(api_url: str, database_url: str) -> None:
         f"chunks={chunk_count}",
         "dimensions=384",
         "repeat_embed=no_pending_chunks",
+        f"search_similarity={search_result['results'][0]['similarity']}",
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--api-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--api-url", default="http://backend:8000")
     parser.add_argument(
         "--database-url",
-        default="postgresql+psycopg2://postgres:postgres@127.0.0.1:5433/documind_ai",
+        default="postgresql+psycopg2://postgres:postgres@postgres:5432/documind_ai",
     )
     args = parser.parse_args()
     verify(args.api_url.rstrip("/"), args.database_url)

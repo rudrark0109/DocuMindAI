@@ -315,53 +315,20 @@ docker compose run --rm backend python -m scripts.evaluate_retrieval
 Measured release-readiness results and limitations are recorded in
 [`docs/retrieval-evaluation.md`](docs/retrieval-evaluation.md).
 
-### Run directly on the host
+### End-to-end pipeline verification
 
-Use Python 3.12 for the backend and Node.js 22 for the frontend. First create the
-local environment file:
-
-```bash
-cp .env.example .env
-```
-
-Start PostgreSQL and install the backend dependencies:
+DocuMindAI is configured and supported through Docker Compose. With the stack
+running, exercise a real two-page mixed PDF through selective OCR, chunking,
+embeddings, PostgreSQL/pgvector, and semantic search:
 
 ```bash
-docker compose up -d postgres
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Then run the backend:
-
-```bash
-alembic upgrade head
-uvicorn backend.app.main:app --reload
-```
-
-In another terminal, run the frontend:
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-Vite runs with host `0.0.0.0` (see frontend scripts).
-
-### Pre-search pipeline verification
-
-With the Docker stack running, exercise a real two-page mixed PDF through
-selective OCR, chunking, embeddings, and PostgreSQL/pgvector validation:
-
-```bash
-python scripts/verify_pre_search_pipeline.py
+docker compose run --rm backend python -m scripts.verify_pre_search_pipeline
 ```
 
 The command also repeats the embedding endpoint and verifies that it creates
-no duplicate vectors. See `docs/pre-search-readiness.md` for the recorded
-validation result and current limitations.
+no duplicate vectors, then confirms that a natural-language query retrieves the
+uploaded OCR-produced passage. See `docs/pre-search-readiness.md` and
+`docs/retrieval-evaluation.md` for recorded results and limitations.
 
 ## Completed Features
 
@@ -374,11 +341,11 @@ validation result and current limitations.
 - Chunk persistence and word-level positioning
 - Automatic chunk embedding with `sentence-transformers/all-MiniLM-L6-v2`
 - Atomic replacement of a document's chunks and vectors during re-indexing
+- Semantic pgvector search with ranked passages and source references
 
 ## Planned Next Steps
 
 - Add OCR quality benchmarks and a Tesseract fallback
-- Semantic search endpoints over the document corpus
 - RAG chat experience for document Q&A
 - Improved document status tracking with queued/processing/completed/failed states
 - Batch processing for multiple documents
