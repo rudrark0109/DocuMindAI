@@ -21,10 +21,10 @@ text page and one rasterized image-only page. It verifies:
 
 ## Live Docker smoke result
 
-Command:
+Docker command:
 
 ```bash
-python scripts/verify_pre_search_pipeline.py
+docker compose run --rm backend python -m scripts.verify_pre_search_pipeline
 ```
 
 Recorded result:
@@ -42,6 +42,19 @@ upload → page-level native/OCR extraction → normalized text → chunk → em
 The extracted scan contained the expected `quarterly revenue` phrase. Direct
 PostgreSQL inspection confirmed every embedded chunk had exactly 384 vector
 dimensions. Repeating the embedding endpoint returned `no_pending_chunks`.
+
+The verifier now continues through `POST /search`, filters results to the
+uploaded document, and confirms that the OCR-produced `quarterly revenue`
+passage is returned with its source metadata and cosine similarity.
+
+Final Docker-only demo result on July 26, 2026:
+
+```text
+PASS: document=f87ebb9c-d9ae-427f-9683-b2728724636a method=hybrid chunks=1 dimensions=384 repeat_embed=no_pending_chunks search_similarity=0.379783
+```
+
+The script waits for backend readiness, so it is safe to run immediately after
+`docker compose up -d`.
 
 ## Migration and fresh-setup result
 
