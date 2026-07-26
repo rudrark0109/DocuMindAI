@@ -18,6 +18,7 @@ RUN apt-get update \
 
 COPY backend ./backend
 COPY models ./models
+COPY scripts ./scripts
 COPY alembic.ini .
 COPY migrations ./migrations
 

@@ -21,11 +21,12 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Extract text from PDFs** using intelligent OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
 - Generate and persist normalized 384-dimensional chunk embeddings
+- Search embedded chunks by cosine similarity with source-document references
 - ML-based OCR decision engine with layout-aware feature extraction
 - PaddleOCR page-extraction service with normalized confidence metadata
 - Backend API built with FastAPI
 - React + Vite frontend for file upload and response display
-- Foundation for embeddings, vector search (`pgvector`), and RAG Q&A
+- `pgvector` semantic retrieval foundation for future RAG Q&A
 
 ## Detailed Tech Stack
 
@@ -109,6 +110,8 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Model Artifacts**:
   - `models/ocr_decision_model.joblib` - Trained Random Forest OCR decision model
   - `models/ocr_model_metadata.json` - Model metadata including feature columns and version
+  - DocuMindAI consumes these artifacts for inference only. Training data,
+    notebooks, retraining, and model rewiring belong to the OCRRouter project.
 
 ### Phase 3: Text Chunking Pipeline
 
@@ -139,7 +142,8 @@ DocuMindAI now supports a complete document intake and processing pipeline:
 - **Intelligently extract text from PDFs** using layout-aware OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
 - Persist document chunks in the database with word-level positioning for retrieval accuracy
-- Use the notebook and model assets as the base for OCR and extraction experiments
+- Consume the versioned OCR-routing model artifact through a stable runtime
+  interface; training and experimentation live in OCRRouter
 
 ## Current API
 
@@ -163,6 +167,7 @@ Base URL: `http://127.0.0.1:8000`
 - `GET /documents/{document_id}/text` - Retrieve extracted text for a document
 - `POST /documents/{document_id}/chunk` - Chunk extracted text and persist chunks
 - `POST /documents/{document_id}/embed` - Embed pending chunks
+- `POST /search` - Search embedded chunks, optionally filtered by document
 
 ### Interactive Documentation
 
@@ -179,7 +184,10 @@ The normal client workflow is:
    - Persists extracted text, processing metadata, chunks, and embeddings
    - Returns document, extraction, chunk, and embedding counts
 2. **Read text** → `GET /documents/{document_id}/text` - Retrieve the persisted result
-3. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
+3. **Search** → `POST /search` - Retrieve the most similar passages
+   - Accepts `query`, `top_k`, `similarity_threshold`, and optional `document_id`
+   - Returns chunk text, preview, cosine similarity, and document references
+4. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
    - Creates overlapping chunks for better context retention
    - Persists chunks with word-level positioning for precise retrieval
 
@@ -195,6 +203,14 @@ second time. A request made while extraction is in progress returns HTTP 409.
 You can also:
 
 - List all documents → `GET /documents` to see all uploaded/processed documents
+
+Example search request:
+
+```bash
+curl -X POST http://localhost:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"invoice payment terms","top_k":5,"similarity_threshold":0.25}'
+```
 
 ### PaddleOCR service
 
@@ -243,6 +259,8 @@ DocuMindAI/
 |  |  |- indexing/
 |  |  |  |- text_chunker.py               # Text chunking logic
 |  |  |  `- chunking_pipeline.py          # Chunking orchestration
+|  |  |- retrieval/
+|  |  |  `- vector_search.py              # pgvector cosine retrieval
 |  |  |- schemas/                         # Pydantic models
 |  |  `- services/                        # File storage, utilities
 |  `- main.py                     # FastAPI app entry point
@@ -287,6 +305,15 @@ persisted across container restarts. To follow startup logs, run
 
 The backend runs `alembic upgrade head` before starting Uvicorn, so both fresh
 and existing Docker volumes are migrated automatically.
+
+Run the retrieval quality and latency sanity check with:
+
+```bash
+docker compose run --rm backend python -m scripts.evaluate_retrieval
+```
+
+Measured release-readiness results and limitations are recorded in
+[`docs/retrieval-evaluation.md`](docs/retrieval-evaluation.md).
 
 ### Run directly on the host
 
