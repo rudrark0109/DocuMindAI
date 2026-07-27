@@ -1,5 +1,7 @@
 # DocuMindAI
 
+Current version: **v1.2.2**
+
 DocuMindAI is an AI-powered document management system for ingesting files, extracting structured information, and preparing data for semantic search and RAG workflows.
 
 ## Project Purpose
@@ -322,7 +324,7 @@ running, exercise a real two-page mixed PDF through selective OCR, chunking,
 embeddings, PostgreSQL/pgvector, and semantic search:
 
 ```bash
-docker compose run --rm backend python -m scripts.verify_pre_search_pipeline
+docker compose run --rm backend python -m scripts.verify_document_pipeline
 ```
 
 The command also repeats the embedding endpoint and verifies that it creates

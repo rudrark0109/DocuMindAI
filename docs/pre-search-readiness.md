@@ -24,7 +24,7 @@ text page and one rasterized image-only page. It verifies:
 Docker command:
 
 ```bash
-docker compose run --rm backend python -m scripts.verify_pre_search_pipeline
+docker compose run --rm backend python -m scripts.verify_document_pipeline
 ```
 
 Recorded result:
@@ -53,8 +53,10 @@ Final Docker-only demo result on July 26, 2026:
 PASS: document=f87ebb9c-d9ae-427f-9683-b2728724636a method=hybrid chunks=1 dimensions=384 repeat_embed=no_pending_chunks search_similarity=0.379783
 ```
 
-The script waits for backend readiness, so it is safe to run immediately after
-`docker compose up -d`.
+The script waits for backend readiness, removes its document, chunks,
+embeddings, and stored PDF after verification, and reports stage-specific
+failures. Use `--keep-test-data` only when the generated record is needed for
+manual inspection.
 
 ## Migration and fresh-setup result
 
