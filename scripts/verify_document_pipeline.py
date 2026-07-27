@@ -6,6 +6,7 @@ import argparse
 import sys
 import tempfile
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -158,18 +159,19 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
     verification_failed = False
 
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with ExitStack() as stack:
+            temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
             pdf_path = Path(temp_dir) / "mixed-pipeline-smoke.pdf"
             create_mixed_pdf(pdf_path)
 
-            with pdf_path.open("rb") as pdf_file:
-                response = request(
-                    "POST",
-                    f"{api_url}/documents/upload",
-                    stage="upload and indexing",
-                    files={"file": (pdf_path.name, pdf_file, "application/pdf")},
-                    timeout=900,
-                )
+            pdf_file = stack.enter_context(pdf_path.open("rb"))
+            response = request(
+                "POST",
+                f"{api_url}/documents/upload",
+                stage="upload and indexing",
+                files={"file": (pdf_path.name, pdf_file, "application/pdf")},
+                timeout=900,
+            )
 
         result = response.json()
         document_id = result.get("document_id")
