@@ -86,21 +86,23 @@ def create_mixed_pdf(path: Path) -> None:
 
 def inspect_vectors(database_url: str, document_id: str) -> tuple[int, int, int]:
     try:
-        with psycopg2.connect(database_url) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT
-                        count(*),
-                        min(vector_dims(embedding)),
-                        max(vector_dims(embedding))
-                    FROM document_chunks
-                    WHERE document_id = %s
-                      AND embedding_status = 'embedded'
-                    """,
-                    (document_id,),
-                )
-                result = cursor.fetchone()
+        with (
+            psycopg2.connect(database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                SELECT
+                    count(*),
+                    min(vector_dims(embedding)),
+                    max(vector_dims(embedding))
+                FROM document_chunks
+                WHERE document_id = %s
+                  AND embedding_status = 'embedded'
+                """,
+                (document_id,),
+            )
+            result = cursor.fetchone()
     except psycopg2.Error as exc:
         raise VerificationError(
             f"database inspection: unable to inspect vectors for {document_id}"
@@ -118,22 +120,24 @@ def inspect_vectors(database_url: str, document_id: str) -> tuple[int, int, int]
 def cleanup_document(database_url: str, document_id: str) -> None:
     file_path: str | None = None
     try:
-        with psycopg2.connect(database_url) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT file_path FROM documents WHERE id = %s",
-                    (document_id,),
-                )
-                row = cursor.fetchone()
-                file_path = row[0] if row else None
-                cursor.execute(
-                    "DELETE FROM document_chunks WHERE document_id = %s",
-                    (document_id,),
-                )
-                cursor.execute(
-                    "DELETE FROM documents WHERE id = %s",
-                    (document_id,),
-                )
+        with (
+            psycopg2.connect(database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "SELECT file_path FROM documents WHERE id = %s",
+                (document_id,),
+            )
+            row = cursor.fetchone()
+            file_path = row[0] if row else None
+            cursor.execute(
+                "DELETE FROM document_chunks WHERE document_id = %s",
+                (document_id,),
+            )
+            cursor.execute(
+                "DELETE FROM documents WHERE id = %s",
+                (document_id,),
+            )
     except psycopg2.Error as exc:
         raise VerificationError(
             f"cleanup: unable to remove test document {document_id}"
