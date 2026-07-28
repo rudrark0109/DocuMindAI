@@ -1,5 +1,3 @@
-"""Backward-compatible entry point for the renamed pipeline verifier."""
-
 from scripts.verify_document_pipeline import main
 
 
