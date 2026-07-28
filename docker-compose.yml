@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: documind_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - documind_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: .
@@ -25,6 +38,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/documind_ai
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
       FRONTEND_ORIGIN: http://localhost:5173
       MAX_UPLOAD_SIZE_MB: 25
       PADDLE_OCR_LANGUAGE: en
@@ -38,6 +53,32 @@ services:
       - paddle_cache:/root/.paddlex
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: documind_worker
+    restart: unless-stopped
+    command: celery -A backend.app.worker.celery_app:celery_app worker --loglevel=INFO --concurrency=1
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/documind_ai
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      PADDLE_OCR_LANGUAGE: en
+      PADDLE_OCR_VERSION: PP-OCRv6
+      PADDLE_OCR_DEVICE: cpu
+    volumes:
+      - ./storage:/app/storage
+      - huggingface_cache:/root/.cache/huggingface
+      - paddle_cache:/root/.paddlex
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:
@@ -55,5 +96,6 @@ services:
 
 volumes:
   documind_postgres_data:
+  documind_redis_data:
   huggingface_cache:
   paddle_cache:
