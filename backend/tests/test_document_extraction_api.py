@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 
-from backend.app.api.documents import extract_document_text, upload_document
+from backend.app.api.documents import (
+    extract_document_text,
+    get_document_status,
+    retry_document_processing,
+    upload_document,
+)
 from backend.app.services.file_storage import FileTooLargeError
 
 
@@ -26,6 +31,14 @@ def make_document():
         ocr_confidence=None,
         ocr_model_version=None,
         processing_status="uploaded",
+        processing_stage="queued",
+        processing_progress=0,
+        processing_error=None,
+        retry_count=0,
+        worker_task_id=None,
+        processing_started_at=None,
+        processing_completed_at=None,
+        updated_at=None,
     )
 
 
@@ -126,14 +139,6 @@ class DocumentExtractionAPITests(unittest.TestCase):
 
 class AutomaticUploadPipelineTests(unittest.TestCase):
     def setUp(self):
-        threadpool_patcher = patch(
-            "backend.app.api.documents.run_in_threadpool",
-            new_callable=AsyncMock,
-        )
-        self.run_in_threadpool = threadpool_patcher.start()
-        self.run_in_threadpool.side_effect = lambda function, *args: function(*args)
-        self.addCleanup(threadpool_patcher.stop)
-
         self.file = SimpleNamespace(content_type="application/pdf")
         self.saved_file = {
             "document_code": "DOC-002",
@@ -144,85 +149,49 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
             "file_size": 456,
         }
 
-    @patch("backend.app.api.documents.rebuild_document_index")
-    @patch("backend.app.api.documents.process_document")
+    @patch("backend.app.api.documents.process_document_task")
     @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_runs_native_pdf_pipeline(self, save_file, process, rebuild_index):
-        save_file.return_value = self.saved_file
-        process.return_value = extraction_result(
-            method="pymupdf",
-            ocr_required="NO",
-        )
-        rebuild_index.return_value = {
-            "status": "embedded",
-            "chunk_count": 1,
-            "embedded_chunk_count": 1,
-            "embedding_model": "test-model",
-        }
-        db = MagicMock()
-
-        response = asyncio.run(upload_document(self.file, db))
-
-        process.assert_called_once_with(self.saved_file["file_path"])
-        self.assertEqual(response["extraction_method"], "pymupdf")
-        self.assertEqual(response["ocr_required"], "NO")
-        self.assertEqual(response["processing_status"], "embedded")
-        self.assertEqual(response["embedded_chunk_count"], 1)
-        self.assertEqual(db.commit.call_count, 2)
-
-    @patch("backend.app.api.documents.rebuild_document_index")
-    @patch("backend.app.api.documents.process_document")
-    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_runs_paddleocr_pipeline(self, save_file, process, rebuild_index):
-        save_file.return_value = self.saved_file
-        process.return_value = extraction_result()
-        rebuild_index.return_value = {
-            "status": "embedded",
-            "chunk_count": 1,
-            "embedded_chunk_count": 1,
-            "embedding_model": "test-model",
-        }
-        db = MagicMock()
-
-        response = asyncio.run(upload_document(self.file, db))
-
-        self.assertEqual(response["extraction_method"], "paddleocr")
-        self.assertEqual(response["ocr_required"], "YES")
-        self.assertEqual(response["extraction_status"], "success")
-        rebuild_index.assert_called_once()
-
-    @patch("backend.app.api.documents.process_document")
-    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_persists_empty_extraction(self, save_file, process):
-        save_file.return_value = self.saved_file
-        process.return_value = extraction_result(status="empty")
-        db = MagicMock()
-
-        response = asyncio.run(upload_document(self.file, db))
-
-        self.assertEqual(response["processing_status"], "text_extraction_empty")
-        self.assertEqual(response["character_count"], 0)
-
-    @patch("backend.app.api.documents.logger.exception")
-    @patch("backend.app.api.documents.process_document")
-    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_persists_failure_status(
+    def test_upload_returns_queued_document_without_running_pipeline(
         self,
         save_file,
-        process,
-        _log_exception,
+        processing_task,
     ):
         save_file.return_value = self.saved_file
-        process.side_effect = RuntimeError("inference failed")
+        db = MagicMock()
+
+        response = asyncio.run(upload_document(self.file, db))
+
+        document = db.add.call_args.args[0]
+        processing_task.apply_async.assert_called_once()
+        task_args = processing_task.apply_async.call_args
+        self.assertEqual(task_args.kwargs["args"], [document.id])
+        self.assertEqual(task_args.kwargs["task_id"], document.worker_task_id)
+        self.assertEqual(response["processing_status"], "queued")
+        self.assertEqual(response["processing_stage"], "queued")
+        self.assertEqual(response["processing_progress"], 0)
+        self.assertEqual(response["worker_task_id"], document.worker_task_id)
+        self.assertEqual(db.commit.call_count, 1)
+
+    @patch("backend.app.api.documents.delete_saved_file")
+    @patch("backend.app.api.documents.process_document_task")
+    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
+    def test_upload_removes_record_and_file_when_queue_is_unavailable(
+        self,
+        save_file,
+        processing_task,
+        delete_file,
+    ):
+        save_file.return_value = self.saved_file
+        processing_task.apply_async.side_effect = RuntimeError("Redis unavailable")
         db = MagicMock()
 
         with self.assertRaises(HTTPException) as raised:
             asyncio.run(upload_document(self.file, db))
 
         document = db.add.call_args.args[0]
-        self.assertEqual(document.processing_status, "extraction_failed")
-        self.assertEqual(raised.exception.status_code, 500)
-        self.assertEqual(raised.exception.detail["document_id"], document.id)
+        self.assertEqual(raised.exception.status_code, 503)
+        db.delete.assert_called_once_with(document)
+        delete_file.assert_called_once_with(self.saved_file["file_path"])
         self.assertEqual(db.commit.call_count, 2)
 
     @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
@@ -234,29 +203,70 @@ class AutomaticUploadPipelineTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 413)
 
-    @patch("backend.app.api.documents.logger.exception")
-    @patch("backend.app.api.documents.rebuild_document_index")
-    @patch("backend.app.api.documents.process_document")
-    @patch("backend.app.api.documents.save_uploaded_file", new_callable=AsyncMock)
-    def test_upload_persists_indexing_failure(
-        self,
-        save_file,
-        process,
-        rebuild_index,
-        _log_exception,
-    ):
-        save_file.return_value = self.saved_file
-        process.return_value = extraction_result()
-        rebuild_index.side_effect = RuntimeError("embedding failed")
-        db = MagicMock()
+
+class BackgroundStatusApiTests(unittest.TestCase):
+    def test_status_reports_queued_work(self):
+        document = make_document()
+        document.processing_status = "queued"
+        db = make_db(document)
+
+        response = get_document_status(document.id, db)
+
+        self.assertEqual(response["job_status"], "queued")
+        self.assertEqual(response["progress"], 0)
+        self.assertFalse(response["can_retry"])
+
+    @patch("backend.app.api.documents.process_document_task")
+    def test_failed_job_can_be_requeued(self, processing_task):
+        document = make_document()
+        document.processing_status = "processing_failed"
+        document.processing_stage = "failed"
+        document.processing_error = "OCR failed"
+        db = make_db(document)
+
+        response = retry_document_processing(document.id, db)
+
+        self.assertEqual(document.processing_status, "queued")
+        self.assertEqual(document.processing_stage, "queued")
+        self.assertEqual(document.retry_count, 1)
+        processing_task.apply_async.assert_called_once_with(
+            args=[document.id],
+            task_id=document.worker_task_id,
+        )
+        self.assertIsNotNone(document.worker_task_id)
+        self.assertEqual(response["job_status"], "queued")
+
+    @patch("backend.app.api.documents.process_document_task")
+    def test_retry_records_queue_publication_failure(self, processing_task):
+        document = make_document()
+        document.processing_status = "processing_failed"
+        document.processing_stage = "failed"
+        document.processing_error = "OCR failed"
+        processing_task.apply_async.side_effect = RuntimeError("Redis unavailable")
+        db = make_db(document)
 
         with self.assertRaises(HTTPException) as raised:
-            asyncio.run(upload_document(self.file, db))
+            retry_document_processing(document.id, db)
 
-        document = db.add.call_args.args[0]
-        self.assertEqual(document.processing_status, "indexing_failed")
-        self.assertEqual(raised.exception.status_code, 500)
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(document.processing_status, "processing_failed")
+        self.assertEqual(document.processing_stage, "failed")
+        self.assertEqual(
+            document.processing_error,
+            "Document processing queue is unavailable.",
+        )
+        self.assertEqual(db.commit.call_count, 2)
 
+    def test_active_job_cannot_be_retried(self):
+        document = make_document()
+        document.processing_status = "processing"
+        document.processing_stage = "extracting"
+        db = make_db(document)
+
+        with self.assertRaises(HTTPException) as raised:
+            retry_document_processing(document.id, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
 
 if __name__ == "__main__":
     unittest.main()

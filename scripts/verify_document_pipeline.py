@@ -1,5 +1,3 @@
-"""Run a reproducible Docker-only mixed-PDF upload-to-search smoke test."""
-
 from __future__ import annotations
 
 import argparse
@@ -61,7 +59,48 @@ def wait_for_api(api_url: str, timeout_seconds: int = 120) -> None:
     )
 
 
-def create_mixed_pdf(path: Path) -> None:
+def wait_for_processing(
+    api_url: str,
+    document_id: str,
+    timeout_seconds: int = 900,
+) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    latest: dict = {}
+    while time.monotonic() < deadline:
+        latest = request(
+            "GET",
+            f"{api_url}/documents/{document_id}/status",
+            stage="background processing",
+            timeout=30,
+        ).json()
+        if latest.get("job_status") == "completed":
+            return latest
+        if latest.get("job_status") == "failed":
+            raise VerificationError(
+                f"background processing: worker failed. Details: {latest!r}"
+            )
+        time.sleep(2)
+    raise VerificationError(
+        "background processing: document did not complete within "
+        f"{timeout_seconds}s. Details: {latest!r}"
+    )
+
+
+def processing_is_terminal(api_url: str, document_id: str) -> bool:
+    try:
+        response = requests.get(
+            f"{api_url}/documents/{document_id}/status",
+            timeout=30,
+        )
+        if response.status_code == 404:
+            return True
+        response.raise_for_status()
+        return response.json().get("job_status") in {"completed", "failed"}
+    except requests.RequestException:
+        return False
+
+
+def create_mixed_pdf(path: Path, scanned_pages: int = 1) -> None:
     with fitz.open() as scanned_source:
         scanned_page = scanned_source.new_page(width=612, height=792)
         scanned_page.insert_text(
@@ -80,8 +119,9 @@ def create_mixed_pdf(path: Path) -> None:
             "NATIVE PAGE: DocuMindAI keeps searchable digital text.",
             fontsize=18,
         )
-        image_page = document.new_page(width=612, height=792)
-        image_page.insert_image(image_page.rect, stream=scanned_image)
+        for _ in range(scanned_pages):
+            image_page = document.new_page(width=612, height=792)
+            image_page.insert_image(image_page.rect, stream=scanned_image)
         document.save(path)
 
 
@@ -153,7 +193,12 @@ def cleanup_document(database_url: str, document_id: str) -> None:
             ) from exc
 
 
-def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> None:
+def verify(
+    api_url: str,
+    database_url: str,
+    keep_test_data: bool = False,
+    scanned_pages: int = 1,
+) -> None:
     wait_for_api(api_url)
     document_id: str | None = None
     verification_failed = False
@@ -162,48 +207,64 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
         with ExitStack() as stack:
             temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
             pdf_path = Path(temp_dir) / "mixed-pipeline-smoke.pdf"
-            create_mixed_pdf(pdf_path)
+            create_mixed_pdf(pdf_path, scanned_pages=scanned_pages)
 
             pdf_file = stack.enter_context(pdf_path.open("rb"))
+            upload_started = time.monotonic()
             response = request(
                 "POST",
                 f"{api_url}/documents/upload",
-                stage="upload and indexing",
+                stage="upload and queue",
                 files={"file": (pdf_path.name, pdf_file, "application/pdf")},
-                timeout=900,
+                timeout=30,
             )
+            upload_seconds = time.monotonic() - upload_started
 
         result = response.json()
         document_id = result.get("document_id")
         require(
             bool(document_id),
-            "upload and indexing",
+            "upload and queue",
             "response did not contain document_id",
             result,
         )
         require(
-            result.get("processing_status") == "embedded",
-            "upload and indexing",
+            result.get("processing_status") == "queued",
+            "upload and queue",
+            "document was not queued",
+            result,
+        )
+        require(
+            upload_seconds < 10,
+            "upload and queue",
+            "upload response was not bounded",
+            {"seconds": upload_seconds},
+        )
+
+        processing_started = time.monotonic()
+        processing_status = wait_for_processing(
+            api_url,
+            document_id,
+            timeout_seconds=max(900, scanned_pages * 30),
+        )
+        processing_seconds = time.monotonic() - processing_started
+        document_result = request(
+            "GET",
+            f"{api_url}/documents/{document_id}",
+            stage="document metadata",
+            timeout=30,
+        ).json()
+        require(
+            document_result.get("processing_status") == "embedded",
+            "background processing",
             "document did not reach embedded status",
-            result,
+            document_result,
         )
         require(
-            result.get("extraction_method") == "hybrid",
-            "upload and indexing",
+            document_result.get("extraction_method") == "hybrid",
+            "background processing",
             "mixed PDF did not use hybrid extraction",
-            result,
-        )
-        require(
-            result.get("chunk_count", 0) >= 1,
-            "upload and indexing",
-            "no chunks were created",
-            result,
-        )
-        require(
-            result.get("embedded_chunk_count") == result.get("chunk_count"),
-            "upload and indexing",
-            "not every chunk was embedded",
-            result,
+            document_result,
         )
 
         text_response = request(
@@ -231,13 +292,10 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
             document_id,
         )
         require(
-            chunk_count == result["chunk_count"],
+            chunk_count >= 1,
             "database inspection",
-            "persisted chunk count differs from the API response",
-            {
-                "database": chunk_count,
-                "api": result["chunk_count"],
-            },
+            "no embedded chunks were persisted",
+            {"database": chunk_count},
         )
         require(
             min_dimensions == max_dimensions == 384,
@@ -298,8 +356,12 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
         print(
             "PASS:",
             f"document={document_id}",
-            f"method={result['extraction_method']}",
+            f"method={document_result['extraction_method']}",
             f"chunks={chunk_count}",
+            f"pages={scanned_pages + 1}",
+            f"upload_seconds={upload_seconds:.3f}",
+            f"processing_seconds={processing_seconds:.3f}",
+            f"job_status={processing_status['job_status']}",
             "dimensions=384",
             "repeat_embed=no_pending_chunks",
             f"search_similarity={first_result['similarity']}",
@@ -309,7 +371,11 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
         verification_failed = True
         raise
     finally:
-        if document_id and not keep_test_data:
+        if (
+            document_id
+            and not keep_test_data
+            and processing_is_terminal(api_url, document_id)
+        ):
             try:
                 cleanup_document(database_url, document_id)
                 print(f"CLEANUP: removed test document {document_id}")
@@ -318,6 +384,11 @@ def verify(api_url: str, database_url: str, keep_test_data: bool = False) -> Non
                     print(str(cleanup_error), file=sys.stderr)
                 else:
                     raise
+        elif document_id and not keep_test_data:
+            print(
+                "CLEANUP: retained active test document "
+                f"{document_id}; remove it after processing reaches a terminal state."
+            )
 
 
 def main() -> None:
@@ -338,11 +409,20 @@ def main() -> None:
         action="store_true",
         help="Retain the generated document, chunks, embeddings, and stored PDF.",
     )
+    parser.add_argument(
+        "--scanned-pages",
+        type=int,
+        default=1,
+        choices=range(1, 101),
+        metavar="1-100",
+        help="Number of image-only pages to generate after one native-text page.",
+    )
     args = parser.parse_args()
     verify(
         args.api_url.rstrip("/"),
         args.database_url,
         keep_test_data=args.keep_test_data,
+        scanned_pages=args.scanned_pages,
     )
 
 

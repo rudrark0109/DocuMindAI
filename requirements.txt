@@ -4,6 +4,7 @@ python-multipart
 pydantic_settings
 sqlalchemy
 alembic
+celery[redis]
 psycopg2-binary
 python-dotenv
 pymupdf

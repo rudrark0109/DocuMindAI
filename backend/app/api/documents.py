@@ -1,7 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
-from fastapi.concurrency import run_in_threadpool
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 from uuid import uuid4
 
@@ -9,7 +8,13 @@ from backend.app.db.database import get_db
 from backend.app.db.models import Document
 from backend.app.db.chunk_model import DocumentChunk
 from backend.app.indexing.chunking_pipeline import create_document_chunks
-from backend.app.schemas.schemas import DocumentProcessingResponse, DocumentResponse
+from backend.app.schemas.schemas import (
+    DocumentProcessingResponse,
+    DocumentProcessingStatus,
+    DocumentRenameRequest,
+    DocumentResponse,
+    DocumentUploadAccepted,
+)
 from backend.app.services.file_storage import (
     FileTooLargeError,
     delete_saved_file,
@@ -18,7 +23,7 @@ from backend.app.services.file_storage import (
 from backend.app.extraction.ocr_decision_engine import predict_ocr_requirement
 from backend.app.extraction.extraction_pipeline import process_document
 from backend.app.indexing.embedding_pipeline import embed_document_chunks
-from backend.app.indexing.indexing_pipeline import rebuild_document_index
+from backend.app.worker.tasks import process_document_task
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger(__name__)
@@ -118,13 +123,12 @@ def _mark_extraction_failed(document: Document, db: Session) -> None:
 
 @router.post(
     "/upload",
-    response_model=DocumentProcessingResponse,
-    status_code=201,
-    summary="Upload and automatically process a PDF",
+    response_model=DocumentUploadAccepted,
+    status_code=202,
+    summary="Upload and queue a PDF for background processing",
     description=(
-        "Stores the PDF, decides whether OCR is required, routes it to PyMuPDF "
-        "or PaddleOCR per page, then persists text, chunks, and embeddings in "
-        "one request."
+        "Validates and stores the PDF, creates its metadata record, and queues "
+        "selective OCR, text extraction, chunking, and embedding for a worker."
     ),
 )
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -136,15 +140,19 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     except FileTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     
+    task_id = str(uuid4())
     document = Document(
-        id = str(uuid4()),
-        document_code = saved_file_info["document_code"],
-        original_filename = saved_file_info["original_filename"],
-        saved_filename = saved_file_info["saved_filename"],
-        file_path = saved_file_info["file_path"],
-        content_type = saved_file_info["content_type"],
-        file_size = int(saved_file_info["file_size"]),
-        processing_status = "processing",
+        id=str(uuid4()),
+        document_code=saved_file_info["document_code"],
+        original_filename=saved_file_info["original_filename"],
+        saved_filename=saved_file_info["saved_filename"],
+        file_path=saved_file_info["file_path"],
+        content_type=saved_file_info["content_type"],
+        file_size=int(saved_file_info["file_size"]),
+        processing_status="queued",
+        processing_stage="queued",
+        processing_progress=0,
+        worker_task_id=task_id,
     )
 
     try:
@@ -157,51 +165,32 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         raise
 
     try:
-        extraction_result = await run_in_threadpool(
-            process_document,
-            document.file_path,
-        )
+        process_document_task.apply_async(args=[document.id], task_id=task_id)
     except Exception as exc:
-        _mark_extraction_failed(document, db)
+        db.rollback()
+        db.delete(document)
+        db.commit()
+        delete_saved_file(document.file_path)
         raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Document extraction failed.",
-                "document_id": document.id,
-                "processing_status": document.processing_status,
-            },
+            status_code=503,
+            detail="Document processing queue is unavailable. Please try again.",
         ) from exc
 
-    _persist_extraction_result(document, extraction_result)
-    db.commit()
-    db.refresh(document)
-
-    indexing_result = None
-    if extraction_result["status"] == "success":
-        try:
-            indexing_result = await run_in_threadpool(
-                rebuild_document_index,
-                document,
-                db,
-            )
-            document.processing_status = indexing_result["status"]
-        except Exception as exc:
-            document.processing_status = "indexing_failed"
-            db.commit()
-            logger.exception(
-                "Document indexing failed",
-                extra={"document_id": document.id},
-            )
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": "Document indexing failed.",
-                    "document_id": document.id,
-                    "processing_status": document.processing_status,
-                },
-            ) from exc
-
-    return _processing_response(document, extraction_result, indexing_result)
+    return {
+        "id": document.id,
+        "document_id": document.id,
+        "document_code": document.document_code,
+        "original_filename": document.original_filename,
+        "saved_filename": document.saved_filename,
+        "file_path": document.file_path,
+        "content_type": document.content_type,
+        "file_size": document.file_size,
+        "processing_status": document.processing_status,
+        "processing_stage": document.processing_stage,
+        "processing_progress": document.processing_progress,
+        "worker_task_id": document.worker_task_id,
+        "created_at": document.created_at,
+    }
 
 @router.get("", response_model=list[DocumentResponse])
 def get_all_documents(db: Session = Depends(get_db)):
@@ -214,6 +203,143 @@ def get_document_by_id(document_id: str, db: Session = Depends(get_db)):
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+def _job_status(document: Document) -> str:
+    if document.processing_stage == "failed" or document.processing_status.endswith(
+        "_failed"
+    ):
+        return "failed"
+    if document.processing_stage == "completed" or document.processing_status in {
+        "embedded",
+        "text_extraction_empty",
+    }:
+        return "completed"
+    if document.processing_status == "queued":
+        return "queued"
+    return "processing"
+
+
+@router.get(
+    "/{document_id}/status",
+    response_model=DocumentProcessingStatus,
+    summary="Get background processing status",
+)
+def get_document_status(document_id: str, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    job_status = _job_status(document)
+    return {
+        "document_id": document.id,
+        "processing_status": document.processing_status,
+        "job_status": job_status,
+        "stage": document.processing_stage,
+        "progress": document.processing_progress,
+        "error": document.processing_error,
+        "retry_count": document.retry_count,
+        "can_retry": job_status == "failed",
+        "worker_task_id": document.worker_task_id,
+        "started_at": document.processing_started_at,
+        "completed_at": document.processing_completed_at,
+        "updated_at": document.updated_at,
+    }
+
+
+@router.post(
+    "/{document_id}/retry",
+    response_model=DocumentProcessingStatus,
+    status_code=202,
+    summary="Retry failed background processing",
+)
+def retry_document_processing(document_id: str, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if _job_status(document) != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed document processing jobs can be retried.",
+        )
+
+    document.processing_status = "queued"
+    document.processing_stage = "queued"
+    document.processing_progress = 0
+    document.processing_error = None
+    document.processing_started_at = None
+    document.processing_completed_at = None
+    document.retry_count += 1
+    task_id = str(uuid4())
+    document.worker_task_id = task_id
+    try:
+        db.commit()
+        db.refresh(document)
+        process_document_task.apply_async(args=[document.id], task_id=task_id)
+    except Exception as exc:
+        db.rollback()
+        document.processing_status = "processing_failed"
+        document.processing_stage = "failed"
+        document.processing_error = "Document processing queue is unavailable."
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="Document processing queue is unavailable. Please try again.",
+        ) from exc
+
+    return get_document_status(document_id, db)
+
+
+@router.patch(
+    "/{document_id}",
+    response_model=DocumentResponse,
+    summary="Rename a stored document",
+)
+def rename_document(
+    document_id: str,
+    request: DocumentRenameRequest,
+    db: Session = Depends(get_db),
+):
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    document.original_filename = request.filename
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+@router.delete(
+    "/{document_id}",
+    status_code=204,
+    summary="Delete a stored document",
+)
+def delete_document(document_id: str, db: Session = Depends(get_db)) -> Response:
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    file_path = document.file_path
+    try:
+        db.query(DocumentChunk).filter(
+            DocumentChunk.document_id == document_id
+        ).delete(synchronize_session=False)
+        db.delete(document)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    try:
+        delete_saved_file(file_path)
+    except OSError:
+        logger.exception(
+            "Document metadata was deleted but its stored file could not be removed",
+            extra={"document_id": document_id, "file_path": file_path},
+        )
+
+    return Response(status_code=204)
 
 @router.post("/{document_id}/ocr-verdict")
 def get_ocr_verdict(
