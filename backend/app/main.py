@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.routes import api_router
 from backend.app.core.config import settings
 
-app = FastAPI(title="DocuMindAI", description="An AI-powered document management system", version="1.0.0")
+app = FastAPI(title="DocuMindAI", description="An AI-powered document management system", version="1.2.2")
 
 app.add_middleware(
     CORSMiddleware,

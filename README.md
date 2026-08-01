@@ -1,5 +1,7 @@
 # DocuMindAI
 
+Current version: **v1.2.2**
+
 DocuMindAI is an AI-powered document management system for ingesting files, extracting structured information, and preparing data for semantic search and RAG workflows.
 
 ## Project Purpose
@@ -16,8 +18,9 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 
 ## Features
 
-- Upload, selectively extract, chunk, and embed PDF documents through one API request
-- Store document metadata and processing status in PostgreSQL
+- Upload PDFs with an immediate `202 Accepted` response
+- Process selective extraction, chunking, and embedding in a durable Celery worker
+- Store document metadata, job stage, progress, errors, and retry state in PostgreSQL
 - **Extract text from PDFs** using intelligent OCR decision making
 - **Chunk extracted text** for semantic search and RAG preparation
 - Generate and persist normalized 384-dimensional chunk embeddings
@@ -34,6 +37,8 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 
 - `FastAPI`: API framework for building and serving REST endpoints
 - `Uvicorn`: ASGI server used to run the FastAPI application
+- `Celery`: Durable document-processing worker
+- `Redis`: Persistent task broker and worker result backend
 - `SQLAlchemy`: ORM for database modeling and queries
 - `python-multipart`: Handles file uploads through form-data
 
@@ -98,11 +103,11 @@ In short, DocuMindAI is being built as the base infrastructure for intelligent d
 - **Extraction Pipeline** (`backend/app/extraction/extraction_pipeline.py`):
   - Routes direct-text PDFs to PyMuPDF and OCR-required PDFs to PaddleOCR
   - Returns a consistent extraction contract for either strategy
-- **Automatic Upload Orchestration** (`POST /documents/upload`):
-  - Persists the uploaded PDF with a `processing` status
-  - Runs the OCR decision and selected extraction strategy immediately
-  - Persists the text, OCR metadata, extraction method, and final status
-  - Returns the complete processing summary in the upload response
+- **Asynchronous Upload Orchestration** (`POST /documents/upload`):
+  - Persists the uploaded PDF with a `queued` status
+  - Queues the existing extraction and indexing pipeline in Celery
+  - Returns `202 Accepted` with the document and worker task IDs
+  - Persists stage, progress, timestamps, retry count, and failure details
 - **New API Endpoints**:
   - `POST /documents/{document_id}/ocr-verdict` - Get OCR decision for a document
   - `POST /documents/{document_id}/extract` - Extract text from a document
@@ -156,9 +161,13 @@ Base URL: `http://127.0.0.1:8000`
 
 ### Document Management
 
-- `POST /documents/upload` - Upload and automatically extract a PDF document
+- `POST /documents/upload` - Store a PDF, queue processing, and return `202 Accepted`
 - `GET /documents` - List uploaded documents (newest first)
 - `GET /documents/{document_id}` - Fetch document metadata by ID
+- `GET /documents/{document_id}/status` - Poll processing stage, progress, and errors
+- `POST /documents/{document_id}/retry` - Safely requeue a failed document
+- `PATCH /documents/{document_id}` - Rename a document
+- `DELETE /documents/{document_id}` - Delete a document and its stored file
 
 ### Document Processing and Diagnostics
 
@@ -177,17 +186,22 @@ Base URL: `http://127.0.0.1:8000`
 
 The normal client workflow is:
 
-1. **Upload and index** → `POST /documents/upload`
+1. **Upload and queue** → `POST /documents/upload`
    - Stores the PDF and creates its document record
+   - Returns `202 Accepted` without waiting for OCR or embeddings
+2. **Track processing** → `GET /documents/{document_id}/status`
+   - Reports queued, active stage, percentage progress, completion, or failure
+   - The React client polls this endpoint without blocking the browser
+3. **Process in the worker**
    - Automatically checks whether OCR is needed using the ML model
    - Routes each native page to PyMuPDF and OCR-required pages to PaddleOCR
    - Persists extracted text, processing metadata, chunks, and embeddings
-   - Returns document, extraction, chunk, and embedding counts
-2. **Read text** → `GET /documents/{document_id}/text` - Retrieve the persisted result
-3. **Search** → `POST /search` - Retrieve the most similar passages
+   - Uses late task acknowledgement and idempotent indexing for safe redelivery
+4. **Read text** → `GET /documents/{document_id}/text` - Retrieve the persisted result
+5. **Search** → `POST /search` - Retrieve the most similar passages
    - Accepts `query`, `top_k`, `similarity_threshold`, and optional `document_id`
    - Returns chunk text, preview, cosine similarity, and document references
-4. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
+6. **Chunk** → `POST /documents/{document_id}/chunk` - Split extracted text into chunks
    - Creates overlapping chunks for better context retention
    - Persists chunks with word-level positioning for precise retrieval
 
@@ -261,6 +275,7 @@ DocuMindAI/
 |  |  |  `- chunking_pipeline.py          # Chunking orchestration
 |  |  |- retrieval/
 |  |  |  `- vector_search.py              # pgvector cosine retrieval
+|  |  |- worker/                           # Celery app and processing task
 |  |  |- schemas/                         # Pydantic models
 |  |  `- services/                        # File storage, utilities
 |  `- main.py                     # FastAPI app entry point
@@ -291,6 +306,7 @@ The services are then available at:
 - Backend API: `http://localhost:8000`
 - Swagger UI: `http://localhost:8000/docs`
 - PostgreSQL: `localhost:5433`
+- Redis and the Celery worker are internal Docker Compose services
 
 Check status or stop the stack with:
 
@@ -299,7 +315,7 @@ docker compose ps
 docker compose down
 ```
 
-Database data, uploaded documents, and the downloaded embedding-model cache are
+Database data, queued jobs, uploaded documents, and downloaded model caches are
 persisted across container restarts. To follow startup logs, run
 `docker compose logs -f`.
 
@@ -322,13 +338,23 @@ running, exercise a real two-page mixed PDF through selective OCR, chunking,
 embeddings, PostgreSQL/pgvector, and semantic search:
 
 ```bash
-docker compose run --rm backend python -m scripts.verify_pre_search_pipeline
+docker compose run --rm backend python -m scripts.verify_document_pipeline
 ```
 
 The command also repeats the embedding endpoint and verifies that it creates
 no duplicate vectors, then confirms that a natural-language query retrieves the
 uploaded OCR-produced passage. See `docs/pre-search-readiness.md` and
 `docs/retrieval-evaluation.md` for recorded results and limitations.
+
+To exercise the non-blocking contract with a generated 51-page mixed PDF (one
+native page and 50 image-only pages), run:
+
+```bash
+docker compose run --rm backend python -m scripts.verify_document_pipeline --scanned-pages 50
+```
+
+The verifier reports upload latency separately from worker processing time and
+removes its generated document, stored PDF, chunks, and embeddings afterward.
 
 ## Completed Features
 
@@ -342,15 +368,22 @@ uploaded OCR-produced passage. See `docs/pre-search-readiness.md` and
 - Automatic chunk embedding with `sentence-transformers/all-MiniLM-L6-v2`
 - Atomic replacement of a document's chunks and vectors during re-indexing
 - Semantic pgvector search with ranked passages and source references
+- Durable Redis/Celery background processing with polling, failure details, and retry
+- Non-blocking React upload progress and failed-job retry controls
+- User-facing document rename and delete actions
 
 ## Planned Next Steps
 
 - Add OCR quality benchmarks and a Tesseract fallback
 - RAG chat experience for document Q&A
-- Improved document status tracking with queued/processing/completed/failed states
+- PDF/text viewer with synchronized page and search-result highlighting
 - Batch processing for multiple documents
 - Webhook support for async document processing
 
 ## Documentation
 
-Project documentation lives in [`docs/DocuMindAI - Project Report.md`](docs/DocuMindAI%20-%20Project%20Report.md). It includes the project abstract, architecture notes, development log, glossary, and appendix.
+Project documentation lives in [`docs/DocuMindAI - Project Report.md`](docs/DocuMindAI%20-%20Project%20Report.md).
+The background worker contract and operations are documented in
+[`docs/async-processing.md`](docs/async-processing.md), and the outstanding
+Notion sequence is mirrored in
+[`docs/notion-roadmap-sync.md`](docs/notion-roadmap-sync.md).

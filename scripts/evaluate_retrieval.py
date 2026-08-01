@@ -1,5 +1,3 @@
-"""Run a small, repeatable semantic-retrieval quality and latency evaluation."""
-
 from __future__ import annotations
 
 import json

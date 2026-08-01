@@ -8,6 +8,10 @@
 *.p12
 *.pfx
 
+#agents
+.agents/
+.codex/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -35,6 +39,9 @@ pnpm-debug.log*
 storage/
 uploads/
 data/
+DocuMindAI Files/
+scripts/
+
 
 # Databases and local runtime files
 *.db
@@ -51,4 +58,3 @@ data/
 Thumbs.db
 
 # Runtime configuration belongs in .env; application config is committed.
-

@@ -14,7 +14,7 @@ async def save_uploaded_file(file: UploadFile) -> dict:
        
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     
-    original_filename = file.filename
+    original_filename = Path(file.filename or "document").name
     file_extension = Path(original_filename).suffix
 
     document_code = generate_document_code(original_filename)
