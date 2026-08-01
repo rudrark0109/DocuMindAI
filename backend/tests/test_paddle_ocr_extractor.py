@@ -4,8 +4,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import fitz
+
+from backend.app.core.config import settings
 from backend.app.extraction.paddle_ocr_extractor import (
     _parse_result,
+    _render_pdf_pages,
     extract_text_with_paddleocr,
     get_ocr_engine,
 )
@@ -86,6 +90,33 @@ class PaddleOCRExtractorTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".txt") as text_file:
             with self.assertRaises(ValueError):
                 extract_text_with_paddleocr(text_file.name)
+
+    def test_rendering_caps_side_and_pixel_count(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as pdf_file:
+            with fitz.open() as document:
+                document.new_page(width=2000, height=3000)
+                document.save(pdf_file.name)
+
+            with patch.object(settings, "ocr_render_dpi", 200):
+                page_number, image = next(iter(_render_pdf_pages(pdf_file.name)))
+
+        self.assertEqual(page_number, 1)
+        self.assertLessEqual(max(image.shape[:2]), settings.ocr_max_render_side)
+        self.assertLessEqual(
+            image.shape[0] * image.shape[1], settings.ocr_max_render_pixels
+        )
+
+    def test_large_documents_use_throughput_render_profile(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as pdf_file:
+            with fitz.open() as document:
+                for _ in range(settings.ocr_large_document_page_threshold + 1):
+                    document.new_page(width=612, height=792)
+                document.save(pdf_file.name)
+
+            with patch.object(settings, "ocr_render_dpi", 150):
+                _, image = next(iter(_render_pdf_pages(pdf_file.name)))
+
+        self.assertEqual(image.shape[1], round(612 * settings.ocr_large_document_dpi / 72))
 
 
 if __name__ == "__main__":

@@ -38,13 +38,25 @@ def _render_pdf_pages(
     pdf_path: Path,
     page_numbers: set[int] | None = None,
 ) -> Iterable[tuple[int, np.ndarray]]:
-    scale = settings.ocr_render_dpi / 72
-    matrix = fitz.Matrix(scale, scale)
+    max_side = max(1, settings.ocr_max_render_side)
+    max_pixels = max(1, settings.ocr_max_render_pixels)
 
     with fitz.open(pdf_path) as document:
+        render_dpi = settings.ocr_render_dpi
+        if len(document) > settings.ocr_large_document_page_threshold:
+            render_dpi = min(render_dpi, settings.ocr_large_document_dpi)
+        base_scale = render_dpi / 72
         for page_number, page in enumerate(document, start=1):
             if page_numbers is not None and page_number not in page_numbers:
                 continue
+            page_width = max(float(page.rect.width), 1.0)
+            page_height = max(float(page.rect.height), 1.0)
+            scale = min(
+                base_scale,
+                max_side / max(page_width, page_height),
+                (max_pixels / (page_width * page_height)) ** 0.5,
+            )
+            matrix = fitz.Matrix(scale, scale)
             pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
             image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
                 pixmap.height, pixmap.width, pixmap.n
@@ -79,6 +91,25 @@ def _parse_result(result: Any) -> tuple[list[dict], str]:
         )
 
     return lines, "\n".join(line["text"] for line in lines)
+
+
+def extract_text_from_image(image: np.ndarray) -> dict:
+    """OCR a decoded RGB image using the same normalized line contract as PDFs."""
+    predictions = list(get_ocr_engine().predict(image))
+    lines = []
+    text_parts = []
+    for prediction in predictions:
+        prediction_lines, prediction_text = _parse_result(prediction)
+        lines.extend(prediction_lines)
+        if prediction_text:
+            text_parts.append(prediction_text)
+    text = "\n".join(text_parts)
+    confidences = [line["confidence"] for line in lines if line["confidence"] is not None]
+    return {
+        "text": text,
+        "lines": lines,
+        "average_confidence": sum(confidences) / len(confidences) if confidences else None,
+    }
 
 
 def extract_text_with_paddleocr(

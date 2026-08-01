@@ -1,4 +1,15 @@
+from pathlib import Path
+
 from backend.app.extraction.ocr_decision_engine import predict_page_ocr_requirements
+from backend.app.extraction.format_extractors import (
+    extract_csv,
+    extract_docx,
+    extract_image,
+    extract_markdown,
+    extract_text_file,
+    validate_document,
+)
+from backend.app.extraction.normalized import ContentBlock
 from backend.app.extraction.paddle_ocr_extractor import extract_text_with_paddleocr
 from backend.app.extraction.pdf_extractor import extract_text_from_pdf
 
@@ -7,6 +18,21 @@ def process_document(file_path: str) -> dict:
     """
     Process a document and determine the best extraction strategy.
     """
+
+    path = Path(file_path)
+    source_format = path.suffix.lower().lstrip(".")
+    if source_format != "pdf":
+        source_format, _ = validate_document(path)
+    if source_format == "txt":
+        return extract_text_file(path)
+    if source_format == "md":
+        return extract_markdown(path)
+    if source_format == "csv":
+        return extract_csv(path)
+    if source_format == "docx":
+        return extract_docx(path)
+    if source_format in {"png", "jpg", "jpeg"}:
+        return extract_image(path)
 
     page_verdicts = predict_page_ocr_requirements(file_path)
     if not page_verdicts:
@@ -96,8 +122,24 @@ def process_document(file_path: str) -> dict:
     else:
         extraction_method = "pymupdf"
 
+    blocks = [
+        ContentBlock(
+            block_index=index,
+            block_type="page",
+            text=page["text"],
+            location={"page": page["page_number"]},
+            extraction_method=page["extraction_method"],
+            confidence=page.get("average_confidence"),
+        ).to_dict()
+        for index, page in enumerate(extracted_pages)
+        if page["text"]
+    ]
     return {
         "status": "success" if full_text else "empty",
+        "source_format": "pdf",
+        "detected_content_type": "application/pdf",
+        "blocks": blocks,
+        "warnings": [],
         "ocr_required": ocr_required,
         "ocr_confidence": (
             sum(confidences) / len(confidences) if confidences else None

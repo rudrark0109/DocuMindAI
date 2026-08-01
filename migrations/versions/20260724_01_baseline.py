@@ -1,9 +1,3 @@
-"""Create the document indexing schema.
-
-Revision ID: 20260724_01
-Revises:
-Create Date: 2026-07-24
-"""
 from typing import Sequence, Union
 
 from alembic import op
